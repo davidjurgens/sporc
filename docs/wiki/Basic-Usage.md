@@ -12,10 +12,11 @@ from sporc import SPORCDataset, SPORCError
 
 ### Loading the Dataset
 
-The first step is to initialize the SPORC dataset:
+The first step is to initialize the SPORC dataset. The package supports three modes:
 
+#### Memory Mode (Default)
 ```python
-# Basic initialization
+# Load all data into memory for fast access
 sporc = SPORCDataset()
 
 # With custom cache directory
@@ -25,7 +26,66 @@ sporc = SPORCDataset(cache_dir="/path/to/cache")
 sporc = SPORCDataset(use_auth_token="your_token_here")
 ```
 
+#### Streaming Mode
+```python
+# Load data on-demand to reduce memory usage
+sporc = SPORCDataset(streaming=True)
+
+# With custom cache directory and authentication
+sporc = SPORCDataset(
+    streaming=True,
+    cache_dir="/path/to/cache",
+    use_auth_token="your_token_here"
+)
+```
+
+#### Selective Mode
+```python
+# Load data on-demand, then filter and load specific subset into memory
+sporc = SPORCDataset(streaming=True)
+
+# Load only education podcasts
+sporc.load_podcast_subset(categories=['education'])
+
+# Load podcasts by specific hosts
+sporc.load_podcast_subset(hosts=['Simon Shapiro', 'John Doe'])
+
+# Load substantial podcasts (10+ episodes)
+sporc.load_podcast_subset(min_episodes=10)
+
+# Complex filtering
+sporc.load_podcast_subset(
+    categories=['education', 'science'],
+    min_episodes=5,
+    min_total_duration=2.0,  # 2+ hours
+    language='en'
+)
+```
+
 **Note**: The dataset will be downloaded automatically on first use. This may take some time depending on your internet connection.
+
+### Choosing Between Memory, Streaming, and Selective Mode
+
+**Use Memory Mode when:**
+- You have sufficient RAM (8GB+ recommended)
+- You need fast access to multiple episodes
+- You want to perform complex searches frequently
+- You need to iterate over data multiple times
+- You're working with smaller subsets of the dataset
+
+**Use Streaming Mode when:**
+- You have limited RAM (< 8GB)
+- You're processing the entire dataset sequentially
+- You only need to access a few episodes
+- You're doing one-pass analysis
+- You're working on systems with memory constraints
+
+**Use Selective Mode when:**
+- You want to work with a specific genre, host, or category
+- You have limited RAM but need fast access to a subset
+- You want to perform frequent searches on a filtered dataset
+- You know your filtering criteria in advance
+- You want the best balance of memory efficiency and performance
 
 ## Working with Podcasts
 
@@ -69,6 +129,46 @@ for episode in podcast.episodes:
     print("---")
 ```
 
+### Streaming Mode: Iterating Over Podcasts
+
+In streaming mode, you can iterate over podcasts one at a time:
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+for podcast in sporc.iterate_podcasts():
+    print(f"Podcast: {podcast.title}")
+    print(f"Episodes: {podcast.num_episodes}")
+
+    for episode in podcast.episodes:
+        print(f"  - {episode.title}")
+
+    # Memory is freed after processing each podcast
+    print("---")
+```
+
+### Selective Mode: Loading Filtered Subsets
+
+In selective mode, you can load specific podcast subsets and then have O(1) access:
+
+```python
+# Initialize streaming mode
+sporc = SPORCDataset(streaming=True)
+
+# Load education podcasts
+sporc.load_podcast_subset(categories=['education'])
+print(f"Loaded {len(sporc)} episodes from education podcasts")
+
+# Now you have fast access to education content
+education_podcasts = sporc.get_all_podcasts()
+for podcast in education_podcasts:
+    print(f"Education podcast: {podcast.title}")
+
+# Fast search within the subset
+long_education_episodes = sporc.search_episodes(min_duration=1800)  # 30+ minutes
+print(f"Found {len(long_education_episodes)} long education episodes")
+```
+
 ## Working with Episodes
 
 ### Getting Episode Information
@@ -95,6 +195,42 @@ print(f"Is interview: {episode.is_interview}")
 print(f"Is panel discussion: {episode.is_panel}")
 print(f"Is long-form: {episode.is_long_form}")
 print(f"Has guests: {episode.has_guests}")
+```
+
+### Streaming Mode: Iterating Over Episodes
+
+In streaming mode, you can iterate over episodes one at a time:
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+for episode in sporc.iterate_episodes():
+    print(f"Episode: {episode.title}")
+    print(f"Duration: {episode.duration_minutes:.1f} minutes")
+    print(f"Speakers: {episode.num_main_speakers}")
+
+    # Process episode...
+    # Memory is freed after processing each episode
+    print("---")
+```
+
+### Selective Mode: Fast Access to Filtered Episodes
+
+In selective mode, you can load filtered episodes and have fast access:
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+# Load substantial episodes (30+ minutes)
+sporc.load_podcast_subset(min_total_duration=5.0)  # 5+ hours per podcast
+
+# Fast access to all loaded episodes
+all_episodes = sporc.get_all_episodes()
+print(f"Loaded {len(all_episodes)} substantial episodes")
+
+# Fast search within the subset
+long_episodes = sporc.search_episodes(min_duration=3600)  # 1+ hour episodes
+print(f"Found {len(long_episodes)} very long episodes")
 ```
 
 ## Searching for Content
@@ -125,6 +261,8 @@ long_interviews = sporc.search_episodes(
 )
 ```
 
+**Note**: In streaming mode, search operations require iterating through the dataset and may be slower than in memory mode. In selective mode, searches are fast O(1) operations on the loaded subset.
+
 ### Getting All Content
 
 ```python
@@ -135,6 +273,91 @@ print(f"Total podcasts: {len(all_podcasts)}")
 # Get all episodes
 all_episodes = sporc.get_all_episodes()
 print(f"Total episodes: {len(all_episodes)}")
+```
+
+**Note**: In streaming mode, these operations load all data into memory, which may defeat the purpose of using streaming mode. Consider using `iterate_podcasts()` or `iterate_episodes()` instead. In selective mode, these operations are fast and only return the loaded subset.
+
+## Selective Loading
+
+### Overview
+
+Selective loading allows you to filter podcasts during the initial loading phase and then have O(1) access to the selected subset. This is useful when you want to work with a specific genre, host, or other criteria without loading the entire dataset.
+
+### Available Filtering Criteria
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+# Filter by podcast names
+sporc.load_podcast_subset(podcast_names=['SingOut SpeakOut', 'Brazen Education'])
+
+# Filter by categories
+sporc.load_podcast_subset(categories=['education', 'science'])
+
+# Filter by hosts
+sporc.load_podcast_subset(hosts=['Simon Shapiro', 'John Doe'])
+
+# Filter by episode count
+sporc.load_podcast_subset(min_episodes=10, max_episodes=100)
+
+# Filter by total duration (in hours)
+sporc.load_podcast_subset(min_total_duration=5.0, max_total_duration=50.0)
+
+# Filter by language
+sporc.load_podcast_subset(language='en')
+
+# Filter by explicit content
+sporc.load_podcast_subset(explicit=False)
+
+# Complex filtering
+sporc.load_podcast_subset(
+    categories=['education', 'science'],
+    min_episodes=5,
+    min_total_duration=2.0,
+    language='en',
+    explicit=False
+)
+```
+
+### Performance Benefits
+
+Selective loading provides the best of both worlds:
+
+```python
+# Initialize streaming mode
+sporc = SPORCDataset(streaming=True)
+
+# Load education podcasts (O(n) one-time cost)
+sporc.load_podcast_subset(categories=['education'])
+print(f"Loaded {len(sporc)} education episodes")
+
+# Now all operations are O(1) on the subset
+education_podcasts = sporc.get_all_podcasts()  # Fast
+long_episodes = sporc.search_episodes(min_duration=1800)  # Fast
+stats = sporc.get_dataset_statistics()  # Fast
+```
+
+### Use Cases
+
+**Research on specific genres:**
+```python
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(categories=['education'])
+# Now you can efficiently analyze education podcasts
+```
+
+**Host analysis:**
+```python
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(hosts=['Simon Shapiro'])
+# Now you can analyze Simon's podcasting patterns
+```
+
+**Content analysis:**
+```python
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(min_episodes=20, min_total_duration=10.0)
+# Now you can analyze substantial, established podcasts
 ```
 
 ## Working with Conversation Turns
@@ -211,6 +434,8 @@ for category, count in sorted(stats['category_distribution'].items(), key=lambda
     print(f"  {category}: {count} episodes")
 ```
 
+**Note**: In streaming mode, calculating statistics requires iterating through the entire dataset and may take longer than in memory mode. In selective mode, statistics are calculated on the loaded subset and are fast.
+
 ### Podcast Statistics
 
 ```python
@@ -233,6 +458,79 @@ print(f"Total turns: {stats['total_turns']}")
 print(f"Total words: {stats['total_words']}")
 print(f"Average turn duration: {stats['avg_turn_duration']:.1f} seconds")
 print(f"Average words per turn: {stats['avg_words_per_turn']:.1f}")
+```
+
+## Memory-Efficient Processing Patterns
+
+### Processing in Batches
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+batch_size = 10
+episode_count = 0
+
+for episode in sporc.iterate_episodes():
+    episode_count += 1
+
+    # Process episode
+    print(f"Processing episode {episode_count}: {episode.title}")
+
+    # Print progress every batch_size episodes
+    if episode_count % batch_size == 0:
+        print(f"Processed {episode_count} episodes")
+        # Memory is automatically freed after each episode
+```
+
+### Filtering During Iteration
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+long_episode_count = 0
+
+for episode in sporc.iterate_episodes():
+    # Filter for long episodes only
+    if episode.duration_minutes >= 30:
+        long_episode_count += 1
+        print(f"Long episode {long_episode_count}: {episode.title}")
+
+        # Process only long episodes
+        # This saves memory by not processing short episodes
+```
+
+### Selective Loading for Efficient Processing
+
+```python
+# Load only the podcasts you need
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(categories=['education'], min_episodes=5)
+
+# Now you can process efficiently with fast access
+for episode in sporc.get_all_episodes():
+    # Process episode with O(1) access
+    print(f"Processing: {episode.title}")
+    turns = episode.get_all_turns()
+    # Process turns...
+```
+
+### Collecting Statistics During Iteration
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+category_counts = {}
+total_duration = 0
+
+for episode in sporc.iterate_episodes():
+    # Update statistics
+    for category in episode.categories:
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    total_duration += episode.duration_seconds
+
+print(f"Total duration: {total_duration/3600:.1f} hours")
+print(f"Category distribution: {category_counts}")
 ```
 
 ## Error Handling
@@ -268,6 +566,45 @@ except SPORCError as e:
         print(f"Dataset error: {e}")
 ```
 
+### Streaming Mode Specific Errors
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+try:
+    # This will raise an error in streaming mode
+    episode_count = len(sporc)
+except RuntimeError as e:
+    print(f"Error: {e}")
+    print("Use iterate_episodes() instead of len() in streaming mode")
+
+# Correct way to count episodes in streaming mode
+episode_count = 0
+for episode in sporc.iterate_episodes():
+    episode_count += 1
+print(f"Total episodes: {episode_count}")
+```
+
+### Selective Mode Specific Errors
+
+```python
+sporc = SPORCDataset(streaming=True)
+
+# This will work fine
+sporc.load_podcast_subset(categories=['education'])
+print(f"Loaded {len(sporc)} episodes")
+
+# This will also work fine (fast access)
+episodes = sporc.get_all_episodes()
+print(f"Retrieved {len(episodes)} episodes")
+
+# But you can only access the loaded subset
+try:
+    podcast = sporc.search_podcast("Podcast Not In Subset")
+except NotFoundError as e:
+    print(f"Podcast not found in loaded subset: {e}")
+```
+
 ## Complete Example
 
 Here's a complete example that demonstrates the basic workflow:
@@ -275,11 +612,18 @@ Here's a complete example that demonstrates the basic workflow:
 ```python
 from sporc import SPORCDataset, SPORCError
 
-def analyze_podcast(podcast_name):
+def analyze_podcast(podcast_name, use_streaming=False, use_selective=False, categories=None):
     """Analyze a podcast and its episodes."""
     try:
         # Load dataset
-        sporc = SPORCDataset()
+        if use_selective:
+            sporc = SPORCDataset(streaming=True)
+            if categories:
+                sporc.load_podcast_subset(categories=categories)
+            else:
+                sporc.load_podcast_subset(podcast_names=[podcast_name])
+        else:
+            sporc = SPORCDataset(streaming=use_streaming)
 
         # Find podcast
         podcast = sporc.search_podcast(podcast_name)
@@ -308,8 +652,10 @@ def analyze_podcast(podcast_name):
     except SPORCError as e:
         print(f"Error: {e}")
 
-# Run the analysis
-analyze_podcast("SingOut SpeakOut")
+# Run the analysis in different modes
+analyze_podcast("SingOut SpeakOut", use_streaming=False)  # Memory mode
+analyze_podcast("SingOut SpeakOut", use_streaming=True)   # Streaming mode
+analyze_podcast("SingOut SpeakOut", use_selective=True, categories=['education'])  # Selective mode
 ```
 
 ## Next Steps
@@ -320,3 +666,5 @@ Now that you understand the basics, you can:
 2. Learn about [Conversation Analysis](Conversation-Analysis) for deeper turn analysis
 3. Check out [Data Quality](Data-Quality) to understand how to assess dataset quality
 4. Try the [Examples](Examples) for more complex use cases
+5. Read about [Streaming Mode](Streaming-Mode) for memory-efficient processing
+6. Learn about [Selective Loading](Selective-Loading) for filtered subset processing

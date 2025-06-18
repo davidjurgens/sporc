@@ -48,8 +48,11 @@ setup(
             "sphinx>=4.0",
             "sphinx-rtd-theme>=1.0",
         ],
+        "streaming": [
+            "psutil>=5.8.0",  # For memory monitoring in streaming examples
+        ],
     },
-    keywords="podcast, audio, nlp, research, dataset, huggingface",
+    keywords="podcast, audio, nlp, research, dataset, huggingface, streaming",
     project_urls={
         "Bug Reports": "https://github.com/yourusername/sporc/issues",
         "Source": "https://github.com/yourusername/sporc",
