@@ -169,20 +169,21 @@ print("SPORC package imported successfully!")
 
 If you encounter issues not covered here:
 
-1. Check the [Troubleshooting](Troubleshooting) page
+1. Check the [FAQ](FAQ.md) page for common solutions
 2. Search existing [issues](https://github.com/yourusername/sporc/issues)
 3. Create a new issue with:
    - Your operating system and Python version
-   - The complete error message
+   - Complete error message
    - Steps to reproduce the issue
+   - Code example
 
 ## Next Steps
 
-Once installation is complete, you can:
+After installation, you can:
 
-1. Read the [Basic Usage](Basic-Usage) guide
-2. Try the [examples](Examples)
-3. Explore the [API Reference](API-Reference)
+1. Read the [Basic Usage](Basic-Usage.md) guide
+2. Try the [Search Examples](Search-Examples.md) for advanced usage
+3. Explore the [API Reference](API-Reference.md)
 
 ## Uninstalling
 

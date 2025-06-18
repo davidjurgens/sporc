@@ -47,46 +47,35 @@ pip install sporc
 
 ## Core Classes
 
-- **[SPORCDataset](SPORCDataset)**: Main class for accessing and searching the dataset
-- **[Podcast](Podcast)**: Represents a podcast with its episodes and metadata
-- **[Episode](Episode)**: Represents a single episode with conversation turns
-- **[Turn](Turn)**: Represents a single conversation turn
+- **[SPORCDataset](SPORCDataset.md)**: Main class for accessing and searching the dataset
+- **[Podcast](Podcast.md)**: Represents a podcast with its episodes and metadata
+- **[Episode](Episode.md)**: Represents a single episode with conversation turns
+- **[Turn](Turn.md)**: Represents a single conversation turn
 
 ## Getting Started
 
-- **[Installation Guide](Installation)**: Detailed setup instructions
-- **[Basic Usage](Basic-Usage)**: Simple examples to get started
-- **[Search Examples](Search-Examples)**: How to search for podcasts and episodes
-- **[Conversation Analysis](Conversation-Analysis)**: Analyzing conversation turns and patterns
+- **[Installation Guide](Installation.md)**: Detailed setup instructions
+- **[Basic Usage](Basic-Usage.md)**: Simple examples to get started
+- **[Search Examples](Search-Examples.md)**: How to search for podcasts and episodes
+- **[Conversation Analysis](Conversation-Analysis.md)**: Analyzing conversation turns and patterns
 
 ## Advanced Topics
 
-- **[Data Quality](Data-Quality)**: Understanding and assessing data quality
-- **[Advanced Analysis](Advanced-Analysis)**: Sophisticated analysis techniques
-- **[Performance Tips](Performance-Tips)**: Optimizing for large datasets
-- **[Troubleshooting](Troubleshooting)**: Common issues and solutions
+- **[Categories](Categories.md)**: Understanding and using podcast categories
+- **[Streaming Mode](Streaming-Mode.md)**: Memory-efficient processing
+- **[Selective Loading](Selective-Loading.md)**: Filtered subset processing
 
-## Examples
+## Reference
 
-- **[Basic Examples](Examples)**: Simple usage examples
-- **[Advanced Examples](Advanced-Examples)**: Complex analysis examples
-- **[Research Use Cases](Research-Use-Cases)**: Examples for research applications
+- **[Complete API Documentation](API-Reference.md)**: Full documentation of all classes and methods
 
-## API Reference
+## Development
 
-- **[Complete API Documentation](API-Reference)**: Full documentation of all classes and methods
-- **[Data Structures](Data-Structures)**: Detailed information about data formats
-- **[Error Handling](Error-Handling)**: Understanding exceptions and error messages
-
-## Contributing
-
-- **[Contributing Guidelines](Contributing)**: How to contribute to the project
-- **[Development Setup](Development-Setup)**: Setting up for development
-- **[Testing](Testing)**: Running tests and writing new ones
+- **[Contributing Guidelines](Contributing.md)**: How to contribute to the project
 
 ## Support
 
-- **[FAQ](FAQ)**: Frequently asked questions
+- **[FAQ](FAQ.md)**: Frequently asked questions
 - **[Issues](https://github.com/yourusername/sporc/issues)**: Report bugs and request features
 - **[Discussions](https://github.com/yourusername/sporc/discussions)**: Community discussions
 
@@ -105,4 +94,4 @@ If you use this package in your research, please cite:
 
 ---
 
-**Ready to get started?** Check out the [Installation Guide](Installation) and [Basic Usage](Basic-Usage) pages!
+**Ready to get started?** Check out the [Installation Guide](Installation.md) and [Basic Usage](Basic-Usage.md) pages!

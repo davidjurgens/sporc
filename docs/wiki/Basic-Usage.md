@@ -662,9 +662,8 @@ analyze_podcast("SingOut SpeakOut", use_selective=True, categories=['education']
 
 Now that you understand the basics, you can:
 
-1. Explore [Search Examples](Search-Examples) for more advanced search techniques
-2. Learn about [Conversation Analysis](Conversation-Analysis) for deeper turn analysis
-3. Check out [Data Quality](Data-Quality) to understand how to assess dataset quality
-4. Try the [Examples](Examples) for more complex use cases
-5. Read about [Streaming Mode](Streaming-Mode) for memory-efficient processing
-6. Learn about [Selective Loading](Selective-Loading) for filtered subset processing
+1. Explore [Search Examples](Search-Examples.md) for more advanced search techniques
+2. Learn about [Conversation Analysis](Conversation-Analysis.md) for deeper turn analysis
+3. Check out [Categories](Categories.md) to understand how to use podcast categories
+4. Try the [Streaming Mode](Streaming-Mode.md) for memory-efficient processing
+5. Learn about [Selective Loading](Selective-Loading.md) for filtered subset processing

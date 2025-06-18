@@ -453,12 +453,15 @@ compare_categories("Education", "Science")
 
 ### Q: How do I use SPORC for conversation analysis research?
 
-**A:** Start with the [Conversation Analysis](Conversation-Analysis) guide. Key approaches:
+**A:** Start with the [Conversation Analysis](Conversation-Analysis.md) guide. Key approaches:
 
-1. **Turn-taking analysis**: Analyze speaker transitions and turn patterns
-2. **Speaker role analysis**: Examine how different speakers participate
-3. **Content analysis**: Study what topics are discussed and how
-4. **Quality assessment**: Filter for high-quality conversations
+1. Use `episode.get_turns_by_time_range()` for time-based analysis
+2. Use `episode.get_turns_by_speaker()` for speaker-specific analysis
+3. Use `episode.get_all_turns()` for comprehensive analysis
+4. Analyze turn-taking patterns with `episode.get_speaker_transitions()`
+5. Get conversation flow with `episode.get_conversation_flow()`
+
+For more advanced analysis, see the [Conversation Analysis](Conversation-Analysis.md) guide.
 
 ### Q: How do I compare conversation patterns across different podcast categories?
 
@@ -535,32 +538,17 @@ for category in categories:
 ### Q: Where can I get more help?
 
 **A:**
-1. Check the [documentation](Home) for detailed guides
-2. Review the [Categories](Categories) guide for category-specific help
+1. Check the [documentation](Home.md) for detailed guides
+2. Review the [Categories](Categories.md) guide for category-specific help
 3. Search existing [issues](https://github.com/yourusername/sporc/issues)
-4. Create a new issue with:
-   - Your operating system and Python version
-   - Complete error message
-   - Steps to reproduce the issue
-   - Code example
+4. Check the [FAQ](FAQ.md) page for common solutions
+5. Review the [Streaming Mode](Streaming-Mode.md) for optimization advice
 
-### Q: How do I report a bug?
+If you're still having issues, please:
 
-**A:** Create an issue on GitHub with:
-1. **Title**: Clear description of the problem
-2. **Description**: Detailed explanation
-3. **Environment**: OS, Python version, package version
-4. **Steps to reproduce**: Exact code and steps
-5. **Expected vs actual behavior**: What you expected vs what happened
-6. **Error messages**: Complete error output
+1. Check that you've accepted the dataset terms on Hugging Face
+2. Verify your Hugging Face token is valid
+3. Try using streaming mode if you have memory issues
+4. Check the [Installation](Installation.md) guide for setup issues
 
-### Q: How can I contribute to the project?
-
-**A:**
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-See the [Contributing](Contributing) guide for more details.
+See the [Contributing](Contributing.md) guide for more details.
