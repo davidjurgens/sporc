@@ -9,6 +9,7 @@ import statistics
 
 from .episode import Episode
 from .exceptions import NotFoundError
+from .constants import SUBCATEGORIES, MAIN_CATEGORIES
 
 
 @dataclass
@@ -73,6 +74,26 @@ class Podcast:
         return sorted(list(categories))
 
     @property
+    def subcategories(self) -> List[str]:
+        """Get all unique subcategories across all episodes."""
+        subcategories = set()
+        for episode in self.episodes:
+            for category in episode.categories:
+                if category in SUBCATEGORIES:
+                    subcategories.add(category)
+        return sorted(list(subcategories))
+
+    @property
+    def main_categories(self) -> List[str]:
+        """Get all unique main categories across all episodes."""
+        main_categories = set()
+        for episode in self.episodes:
+            for category in episode.categories:
+                if category in MAIN_CATEGORIES:
+                    main_categories.add(category)
+        return sorted(list(main_categories))
+
+    @property
     def primary_category(self) -> Optional[str]:
         """Get the most common primary category across episodes."""
         if not self.episodes:
@@ -87,6 +108,23 @@ class Podcast:
             return None
 
         return max(category_counts, key=category_counts.get)
+
+    @property
+    def primary_subcategory(self) -> Optional[str]:
+        """Get the most common subcategory across episodes."""
+        if not self.episodes:
+            return None
+
+        subcategory_counts = {}
+        for episode in self.episodes:
+            for category in episode.categories:
+                if category in SUBCATEGORIES:
+                    subcategory_counts[category] = subcategory_counts.get(category, 0) + 1
+
+        if not subcategory_counts:
+            return None
+
+        return max(subcategory_counts, key=subcategory_counts.get)
 
     @property
     def total_duration_seconds(self) -> float:
@@ -203,6 +241,24 @@ class Podcast:
         return [
             episode for episode in self.episodes
             if category in episode.categories
+        ]
+
+    def get_episodes_by_subcategory(self, subcategory: str) -> List[Episode]:
+        """
+        Get all episodes in a specific subcategory.
+
+        Args:
+            subcategory: Subcategory to search for
+
+        Returns:
+            List of episodes in the specified subcategory
+        """
+        if subcategory not in SUBCATEGORIES:
+            return []
+
+        return [
+            episode for episode in self.episodes
+            if subcategory in episode.categories
         ]
 
     def get_episodes_by_duration_range(self, min_minutes: float = 0, max_minutes: float = float('inf')) -> List[Episode]:

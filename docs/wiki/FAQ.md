@@ -89,6 +89,127 @@ for speaker in episode.main_speakers:
     print(f"{speaker}: {total_time/60:.1f} minutes")
 ```
 
+## Categories
+
+### Q: What categories are available in SPORC?
+
+**A:** SPORC uses the official [Apple Podcasts categories](https://podcasters.apple.com/support/1691-apple-podcasts-categories). There are 19 main categories with many subcategories:
+
+**Main Categories:**
+- Arts, Business, Comedy, Education, Fiction, Government, History, Health & Fitness, Kids & Family, Leisure, Music, News, Religion & Spirituality, Science, Society & Culture, Sports, Technology, True Crime, TV & Film
+
+**Popular Subcategories:**
+- Education: Language Learning, Self-Improvement, Courses, How To
+- Business: Entrepreneurship, Investing, Management, Marketing
+- Science: Astronomy, Physics, Chemistry, Life Sciences
+- News: Politics, Tech News, Business News, Sports News
+- Health & Fitness: Mental Health, Nutrition, Medicine, Fitness
+
+### Q: How do I search by category?
+
+**A:** Use the `category` parameter in `search_episodes`:
+
+```python
+# Search by main category
+education_episodes = sporc.search_episodes(category="Education")
+
+# Search by subcategory
+language_learning = sporc.search_episodes(category="Language Learning")
+
+# Search multiple categories
+business_science = sporc.search_episodes(category=["Business", "Science"])
+```
+
+### Q: How do I check if a category is valid?
+
+**A:** Use the category utility functions:
+
+```python
+from sporc import is_valid_category, is_main_category, is_subcategory
+
+print(is_valid_category("Education"))      # True
+print(is_valid_category("Invalid"))        # False
+print(is_main_category("Education"))       # True
+print(is_subcategory("Language Learning")) # True
+```
+
+### Q: How do I get all available categories?
+
+**A:** Use the category utility functions:
+
+```python
+from sporc import get_all_categories, get_main_categories, get_subcategories
+
+all_categories = get_all_categories()
+main_categories = get_main_categories()
+science_subcategories = get_subcategories("Science")
+```
+
+### Q: Can I search by both main categories and subcategories?
+
+**A:** Yes! You can search by any valid category name, whether it's a main category or subcategory:
+
+```python
+# These all work:
+episodes = sporc.search_episodes(category="Education")           # Main category
+episodes = sporc.search_episodes(category="Language Learning")   # Subcategory
+episodes = sporc.search_episodes(category=["Education", "Language Learning"])  # Both
+```
+
+### Q: What's the difference between main categories and subcategories?
+
+**A:**
+- **Main categories** are the top-level categories (e.g., "Education", "Science", "Business")
+- **Subcategories** are more specific classifications within main categories (e.g., "Language Learning" is a subcategory of "Education")
+- You can search by either, and the system will find all matching episodes
+
+### Q: How do I search specifically by subcategory?
+
+**A:** You can use dedicated subcategory search methods:
+
+```python
+# Use the dedicated subcategory search method
+language_episodes = sporc.search_episodes_by_subcategory("Language Learning")
+
+# Use the subcategory parameter in general search
+self_improvement_episodes = sporc.search_episodes(subcategory="Self-Improvement")
+
+# Search for podcasts by subcategory
+language_podcasts = sporc.search_podcasts_by_subcategory("Language Learning")
+```
+
+### Q: How do I find all subcategories for a main category?
+
+**A:** Use the subcategory utility functions:
+
+```python
+from sporc import get_subcategories_by_main_category
+
+science_subcategories = get_subcategories_by_main_category("Science")
+print(science_subcategories)  # ['Astronomy', 'Chemistry', 'Earth Sciences', ...]
+```
+
+### Q: How do I search for subcategories by name?
+
+**A:** Use the search function:
+
+```python
+from sporc import search_subcategories
+
+tech_matches = search_subcategories("tech")
+print(tech_matches)  # ['Tech News', 'Technology']
+```
+
+### Q: How do I get subcategory information for a podcast?
+
+**A:** Use the subcategory properties:
+
+```python
+podcast = sporc.search_podcast("Some Podcast")
+print(f"Subcategories: {podcast.subcategories}")
+print(f"Primary subcategory: {podcast.primary_subcategory}")
+```
+
 ## Performance and Memory
 
 ### Q: The dataset is using too much memory. What can I do?
@@ -103,7 +224,7 @@ Or use selective loading to load only specific podcasts:
 
 ```python
 sporc = SPORCDataset(streaming=True)
-sporc.load_podcast_subset(categories=['education'])
+sporc.load_podcast_subset(categories=['Education'])
 ```
 
 ### Q: Search operations are very slow. How can I speed them up?
@@ -199,6 +320,26 @@ Then try loading the dataset again.
 
 Try using memory mode for consistent results.
 
+### Q: My category search returns no results. What's wrong?
+
+**A:** Check the following:
+
+1. **Case sensitivity**: Category names are case-sensitive. Use "Education" not "education"
+2. **Exact spelling**: Use exact category names from the Apple Podcasts list
+3. **Check validity**: Use `is_valid_category("Your Category")` to verify
+4. **Try main categories**: If a subcategory returns no results, try the main category
+
+```python
+from sporc import is_valid_category
+
+# Check if your category is valid
+if is_valid_category("Your Category"):
+    episodes = sporc.search_episodes(category="Your Category")
+    print(f"Found {len(episodes)} episodes")
+else:
+    print("Invalid category name")
+```
+
 ## Advanced Usage
 
 ### Q: How do I analyze conversation patterns across multiple episodes?
@@ -207,7 +348,7 @@ Try using memory mode for consistent results.
 
 ```python
 sporc = SPORCDataset(streaming=True)
-sporc.load_podcast_subset(categories=['education'])
+sporc.load_podcast_subset(categories=['Education'])
 
 all_turns = []
 for episode in sporc.get_all_episodes():
@@ -288,6 +429,26 @@ df = pd.DataFrame(quality_stats)
 print(f"Average overlap: {df['overlap_duration'].mean():.3f}")
 ```
 
+### Q: How do I compare different categories?
+
+**A:** Use category-based analysis:
+
+```python
+def compare_categories(category1, category2):
+    episodes1 = sporc.search_episodes(category=category1)
+    episodes2 = sporc.search_episodes(category=category2)
+
+    print(f"{category1}: {len(episodes1)} episodes")
+    print(f"{category2}: {len(episodes2)} episodes")
+
+    if episodes1 and episodes2:
+        avg_duration1 = sum(ep.duration_minutes for ep in episodes1) / len(episodes1)
+        avg_duration2 = sum(ep.duration_minutes for ep in episodes2) / len(episodes2)
+        print(f"Avg duration: {avg_duration1:.1f} vs {avg_duration2:.1f} minutes")
+
+compare_categories("Education", "Science")
+```
+
 ## Research Applications
 
 ### Q: How do I use SPORC for conversation analysis research?
@@ -306,11 +467,11 @@ print(f"Average overlap: {df['overlap_duration'].mean():.3f}")
 ```python
 # Load education podcasts
 sporc_edu = SPORCDataset(streaming=True)
-sporc_edu.load_podcast_subset(categories=['education'])
+sporc_edu.load_podcast_subset(categories=['Education'])
 
 # Load science podcasts
 sporc_sci = SPORCDataset(streaming=True)
-sporc_sci.load_podcast_subset(categories=['science'])
+sporc_sci.load_podcast_subset(categories=['Science'])
 
 # Compare patterns
 edu_turns = sum(len(ep.get_all_turns()) for ep in sporc_edu.get_all_episodes())
@@ -339,14 +500,45 @@ def extract_features(episode):
 features = [extract_features(ep) for ep in sporc.get_all_episodes()]
 ```
 
+### Q: How do I analyze content by category for research?
+
+**A:** Use category-based content analysis:
+
+```python
+def analyze_category_content(category_name):
+    episodes = sporc.search_episodes(category=category_name)
+
+    if not episodes:
+        return None
+
+    total_episodes = len(episodes)
+    total_duration = sum(ep.duration_hours for ep in episodes)
+    avg_duration = total_duration / total_episodes
+
+    return {
+        'category': category_name,
+        'total_episodes': total_episodes,
+        'total_duration_hours': total_duration,
+        'avg_duration_hours': avg_duration
+    }
+
+# Analyze multiple categories
+categories = ["Education", "Science", "Business", "News"]
+for category in categories:
+    analysis = analyze_category_content(category)
+    if analysis:
+        print(f"{analysis['category']}: {analysis['total_episodes']} episodes")
+```
+
 ## Getting Help
 
 ### Q: Where can I get more help?
 
 **A:**
 1. Check the [documentation](Home) for detailed guides
-2. Search existing [issues](https://github.com/yourusername/sporc/issues)
-3. Create a new issue with:
+2. Review the [Categories](Categories) guide for category-specific help
+3. Search existing [issues](https://github.com/yourusername/sporc/issues)
+4. Create a new issue with:
    - Your operating system and Python version
    - Complete error message
    - Steps to reproduce the issue

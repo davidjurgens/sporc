@@ -87,20 +87,139 @@ print(f"Found {len(guest_episodes)} episodes featuring Jane Smith")
 
 ```python
 # Find education podcasts
-education_episodes = sporc.search_episodes(category="education")
+education_episodes = sporc.search_episodes(category="Education")
 print(f"Found {len(education_episodes)} education episodes")
 
-# Find music podcasts
-music_episodes = sporc.search_episodes(category="music")
-print(f"Found {len(music_episodes)} music episodes")
+# Find specific education subcategories
+language_learning_episodes = sporc.search_episodes(category="Language Learning")
+print(f"Found {len(language_learning_episodes)} language learning episodes")
+
+self_improvement_episodes = sporc.search_episodes(category="Self-Improvement")
+print(f"Found {len(self_improvement_episodes)} self-improvement episodes")
+
+# Find business podcasts
+business_episodes = sporc.search_episodes(category="Business")
+print(f"Found {len(business_episodes)} business episodes")
+
+# Find specific business subcategories
+entrepreneurship_episodes = sporc.search_episodes(category="Entrepreneurship")
+print(f"Found {len(entrepreneurship_episodes)} entrepreneurship episodes")
+
+investing_episodes = sporc.search_episodes(category="Investing")
+print(f"Found {len(investing_episodes)} investing episodes")
 
 # Find science podcasts
-science_episodes = sporc.search_episodes(category="science")
+science_episodes = sporc.search_episodes(category="Science")
 print(f"Found {len(science_episodes)} science episodes")
 
+# Find specific science subcategories
+astronomy_episodes = sporc.search_episodes(category="Astronomy")
+print(f"Found {len(astronomy_episodes)} astronomy episodes")
+
+physics_episodes = sporc.search_episodes(category="Physics")
+print(f"Found {len(physics_episodes)} physics episodes")
+
 # Find news podcasts
-news_episodes = sporc.search_episodes(category="news")
+news_episodes = sporc.search_episodes(category="News")
 print(f"Found {len(news_episodes)} news episodes")
+
+# Find specific news subcategories
+tech_news_episodes = sporc.search_episodes(category="Tech News")
+print(f"Found {len(tech_news_episodes)} tech news episodes")
+
+politics_episodes = sporc.search_episodes(category="Politics")
+print(f"Found {len(politics_episodes)} politics episodes")
+
+# Find health and fitness podcasts
+health_episodes = sporc.search_episodes(category="Health & Fitness")
+print(f"Found {len(health_episodes)} health and fitness episodes")
+
+# Find specific health subcategories
+mental_health_episodes = sporc.search_episodes(category="Mental Health")
+print(f"Found {len(mental_health_episodes)} mental health episodes")
+
+nutrition_episodes = sporc.search_episodes(category="Nutrition")
+print(f"Found {len(nutrition_episodes)} nutrition episodes")
+
+# Find sports podcasts
+sports_episodes = sporc.search_episodes(category="Sports")
+print(f"Found {len(sports_episodes)} sports episodes")
+
+# Find specific sports subcategories
+football_episodes = sporc.search_episodes(category="Football")
+print(f"Found {len(football_episodes)} football episodes")
+
+basketball_episodes = sporc.search_episodes(category="Basketball")
+print(f"Found {len(basketball_episodes)} basketball episodes")
+
+# Find leisure podcasts
+leisure_episodes = sporc.search_episodes(category="Leisure")
+print(f"Found {len(leisure_episodes)} leisure episodes")
+
+# Find specific leisure subcategories
+video_games_episodes = sporc.search_episodes(category="Video Games")
+print(f"Found {len(video_games_episodes)} video games episodes")
+
+automotive_episodes = sporc.search_episodes(category="Automotive")
+print(f"Found {len(automotive_episodes)} automotive episodes")
+
+# Find society and culture podcasts
+society_episodes = sporc.search_episodes(category="Society & Culture")
+print(f"Found {len(society_episodes)} society and culture episodes")
+
+# Find specific society subcategories
+documentary_episodes = sporc.search_episodes(category="Documentary")
+print(f"Found {len(documentary_episodes)} documentary episodes")
+
+philosophy_episodes = sporc.search_episodes(category="Philosophy")
+print(f"Found {len(philosophy_episodes)} philosophy episodes")
+```
+
+### Search Episodes by Subcategory
+
+```python
+# Use the dedicated subcategory search method
+language_learning_episodes = sporc.search_episodes_by_subcategory("Language Learning")
+print(f"Found {len(language_learning_episodes)} language learning episodes")
+
+# Use the subcategory parameter in general search
+self_improvement_episodes = sporc.search_episodes(subcategory="Self-Improvement")
+print(f"Found {len(self_improvement_episodes)} self-improvement episodes")
+
+# Search for podcasts by subcategory
+language_podcasts = sporc.search_podcasts_by_subcategory("Language Learning")
+print(f"Found {len(language_podcasts)} podcasts with language learning episodes")
+
+# Combine subcategory with other criteria
+long_language_episodes = sporc.search_episodes_by_subcategory(
+    "Language Learning",
+    min_duration=1800  # 30+ minutes
+)
+print(f"Found {len(long_language_episodes)} long language learning episodes")
+
+# Search for multiple subcategories
+tech_subcategories = ["Tech News", "Technology"]
+tech_episodes = []
+for subcategory in tech_subcategories:
+    episodes = sporc.search_episodes_by_subcategory(subcategory)
+    tech_episodes.extend(episodes)
+print(f"Found {len(tech_episodes)} tech-related episodes")
+
+# Search for health subcategories
+health_subcategories = ["Mental Health", "Nutrition", "Fitness"]
+health_episodes = []
+for subcategory in health_subcategories:
+    episodes = sporc.search_episodes_by_subcategory(subcategory)
+    health_episodes.extend(episodes)
+print(f"Found {len(health_episodes)} health-related episodes")
+
+# Search for sports subcategories
+sports_subcategories = ["Football", "Basketball", "Baseball", "Soccer"]
+sports_episodes = []
+for subcategory in sports_subcategories:
+    episodes = sporc.search_episodes_by_subcategory(subcategory)
+    sports_episodes.extend(episodes)
+print(f"Found {len(sports_episodes)} sports-related episodes")
 ```
 
 ### Search Episodes by Language
@@ -146,25 +265,39 @@ print(f"Found {len(short_solo)} short solo episodes")
 ```python
 # Find long education episodes
 long_education = sporc.search_episodes(
-    category="education",
+    category="Education",
     min_duration=1800     # 30+ minutes
 )
 print(f"Found {len(long_education)} long education episodes")
 
 # Find short music episodes
 short_music = sporc.search_episodes(
-    category="music",
+    category="Music",
     max_duration=600      # 10 minutes or less
 )
 print(f"Found {len(short_music)} short music episodes")
 
 # Find medium-length science episodes
 medium_science = sporc.search_episodes(
-    category="science",
+    category="Science",
     min_duration=900,     # 15+ minutes
     max_duration=2700     # 45 minutes or less
 )
 print(f"Found {len(medium_science)} medium-length science episodes")
+
+# Find long business episodes
+long_business = sporc.search_episodes(
+    category="Business",
+    min_duration=3600     # 1+ hour
+)
+print(f"Found {len(long_business)} long business episodes")
+
+# Find short comedy episodes
+short_comedy = sporc.search_episodes(
+    category="Comedy",
+    max_duration=900      # 15 minutes or less
+)
+print(f"Found {len(short_comedy)} short comedy episodes")
 ```
 
 ### Host and Category Combinations
@@ -173,16 +306,23 @@ print(f"Found {len(medium_science)} medium-length science episodes")
 # Find education episodes by specific host
 simon_education = sporc.search_episodes(
     host_name="Simon Shapiro",
-    category="education"
+    category="Education"
 )
 print(f"Found {len(simon_education)} education episodes by Simon Shapiro")
 
 # Find science episodes with multiple hosts
 multi_host_science = sporc.search_episodes(
     host_name=["Simon Shapiro", "John Doe", "Jane Smith"],
-    category="science"
+    category="Science"
 )
 print(f"Found {len(multi_host_science)} science episodes by specified hosts")
+
+# Find business episodes by specific hosts
+business_hosts = sporc.search_episodes(
+    host_name=["Business Host", "Finance Expert"],
+    category="Business"
+)
+print(f"Found {len(business_hosts)} business episodes by business hosts")
 ```
 
 ### Language and Quality Combinations
@@ -260,7 +400,7 @@ conversation_analysis = sporc.search_episodes(
     max_speakers=4,                   # At most 4 speakers
     min_duration=1800,                # 30+ minutes
     max_overlap_prop_duration=0.1,    # Good diarization
-    category="education"              # Education content
+    category="Education"              # Education content
 )
 print(f"Found {len(conversation_analysis)} episodes suitable for conversation analysis")
 
@@ -269,7 +409,7 @@ speaker_role_analysis = sporc.search_episodes(
     min_speakers=3,                   # Multiple speakers
     max_speakers=6,                   # Not too many speakers
     min_duration=2700,                # 45+ minutes
-    category=["education", "science"] # Educational content
+    category=["Education", "Science"] # Educational content
 )
 print(f"Found {len(speaker_role_analysis)} episodes for speaker role analysis")
 ```
@@ -290,9 +430,87 @@ print(f"Found {len(content_analysis)} episodes for content analysis")
 topic_modeling = sporc.search_episodes(
     min_duration=1800,                # 30+ minutes
     min_speakers=2,                   # Multiple speakers
-    category=["education", "science", "news"]  # Various topics
+    category=["Education", "Science", "News"]  # Various topics
 )
 print(f"Found {len(topic_modeling)} episodes for topic modeling")
+```
+
+### Specialized Category Searches
+
+```python
+# Find technology-focused episodes
+tech_episodes = sporc.search_episodes(
+    category="Technology",
+    min_duration=1800                 # 30+ minutes
+)
+print(f"Found {len(tech_episodes)} technology episodes")
+
+# Find true crime episodes
+true_crime_episodes = sporc.search_episodes(
+    category="True Crime",
+    min_duration=2700                 # 45+ minutes
+)
+print(f"Found {len(true_crime_episodes)} true crime episodes")
+
+# Find fiction episodes
+fiction_episodes = sporc.search_episodes(
+    category="Fiction",
+    min_speakers=2                    # Multiple speakers for dialogue
+)
+print(f"Found {len(fiction_episodes)} fiction episodes")
+
+# Find specific fiction subcategories
+drama_episodes = sporc.search_episodes(
+    category="Drama",
+    min_duration=1800
+)
+print(f"Found {len(drama_episodes)} drama episodes")
+
+science_fiction_episodes = sporc.search_episodes(
+    category="Science Fiction",
+    min_duration=1800
+)
+print(f"Found {len(science_fiction_episodes)} science fiction episodes")
+
+# Find religion and spirituality episodes
+religion_episodes = sporc.search_episodes(
+    category="Religion & Spirituality",
+    min_duration=1800
+)
+print(f"Found {len(religion_episodes)} religion and spirituality episodes")
+
+# Find specific religion subcategories
+christianity_episodes = sporc.search_episodes(
+    category="Christianity",
+    min_duration=1800
+)
+print(f"Found {len(christianity_episodes)} Christianity episodes")
+
+buddhism_episodes = sporc.search_episodes(
+    category="Buddhism",
+    min_duration=1800
+)
+print(f"Found {len(buddhism_episodes)} Buddhism episodes")
+
+# Find kids and family episodes
+kids_episodes = sporc.search_episodes(
+    category="Kids & Family",
+    max_duration=1800                 # Shorter episodes for kids
+)
+print(f"Found {len(kids_episodes)} kids and family episodes")
+
+# Find specific kids subcategories
+parenting_episodes = sporc.search_episodes(
+    category="Parenting",
+    min_duration=900                  # 15+ minutes
+)
+print(f"Found {len(parenting_episodes)} parenting episodes")
+
+stories_for_kids_episodes = sporc.search_episodes(
+    category="Stories for Kids",
+    max_duration=1200                 # 20 minutes or less
+)
+print(f"Found {len(stories_for_kids_episodes)} stories for kids episodes")
 ```
 
 ## Performance-Optimized Searches
@@ -323,7 +541,7 @@ print(f"Found {len(long_episodes)} long episodes with 2-4 speakers")
 # Load specific subset for fast access
 sporc = SPORCDataset(streaming=True)
 sporc.load_podcast_subset(
-    categories=['education', 'science'],
+    categories=['Education', 'Science'],
     min_episodes=5,
     min_total_duration=2.0
 )
@@ -331,7 +549,7 @@ sporc.load_podcast_subset(
 # Now fast searches within the subset
 long_education = sporc.search_episodes(min_duration=1800)
 multi_speaker_science = sporc.search_episodes(
-    category="science",
+    category="Science",
     min_speakers=3
 )
 
@@ -346,7 +564,7 @@ print(f"Found {len(multi_speaker_science)} multi-speaker science episodes")
 ```python
 # Perform a complex search
 results = sporc.search_episodes(
-    category="education",
+    category="Education",
     min_duration=1800,
     min_speakers=2,
     max_speakers=4,
@@ -383,7 +601,7 @@ if results:
 
 ```python
 # Get search results
-episodes = sporc.search_episodes(category="education", min_duration=1800)
+episodes = sporc.search_episodes(category="Education", min_duration=1800)
 
 # Sort by duration (longest first)
 longest_first = sorted(episodes, key=lambda ep: ep.duration_seconds, reverse=True)
@@ -412,7 +630,7 @@ try:
 
     # Perform search
     results = sporc.search_episodes(
-        category="education",
+        category="Education",
         min_duration=1800
     )
 
@@ -436,3 +654,5 @@ except Exception as e:
 6. **Validate Parameters**: Ensure search parameters are within valid ranges
 7. **Use Streaming**: For large-scale searches, use streaming mode
 8. **Combine Criteria**: Use multiple criteria for more precise results
+9. **Use Subcategories**: Leverage specific subcategories for more targeted searches
+10. **Check Category Validity**: Use the category utility functions to validate category names

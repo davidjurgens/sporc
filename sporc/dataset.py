@@ -564,6 +564,7 @@ class SPORCDataset:
                 - host_name: Host name to search for
                 - guest_name: Guest name to search for
                 - category: Category to search for
+                - subcategory: Subcategory to search for
                 - min_overlap_prop_duration: Minimum overlap proportion (duration)
                 - max_overlap_prop_duration: Maximum overlap proportion (duration)
                 - min_overlap_prop_turn_count: Minimum overlap proportion (turn count)
@@ -622,6 +623,14 @@ class SPORCDataset:
                 if any(category in cat.lower() for cat in ep.categories)
             ]
 
+        # Filter by subcategory
+        if 'subcategory' in criteria:
+            subcategory = criteria['subcategory'].lower()
+            episodes = [
+                ep for ep in episodes
+                if any(subcategory in cat.lower() for cat in ep.categories)
+            ]
+
         # Filter by overlap proportions
         if 'min_overlap_prop_duration' in criteria:
             min_overlap = criteria['min_overlap_prop_duration']
@@ -640,6 +649,49 @@ class SPORCDataset:
             episodes = [ep for ep in episodes if ep.overlap_prop_turn_count <= max_overlap]
 
         return episodes
+
+    def search_episodes_by_subcategory(self, subcategory: str, **additional_criteria) -> List[Episode]:
+        """
+        Search for episodes in a specific subcategory.
+
+        Args:
+            subcategory: Subcategory to search for
+            **additional_criteria: Additional search criteria (same as search_episodes)
+
+        Returns:
+            List of episodes in the specified subcategory
+        """
+        criteria = {'subcategory': subcategory}
+        criteria.update(additional_criteria)
+        return self.search_episodes(**criteria)
+
+    def search_podcasts_by_subcategory(self, subcategory: str) -> List[Podcast]:
+        """
+        Search for podcasts that have episodes in a specific subcategory.
+
+        Args:
+            subcategory: Subcategory to search for
+
+        Returns:
+            List of podcasts with episodes in the specified subcategory
+        """
+        if self.streaming and not self._selective_mode:
+            return self._search_podcasts_by_subcategory_streaming(subcategory)
+
+        if not self._loaded:
+            raise RuntimeError("Dataset not loaded. Call _load_dataset() first.")
+
+        matching_podcasts = []
+        subcategory_lower = subcategory.lower()
+
+        for podcast in self._podcasts.values():
+            # Check if any episode in this podcast has the subcategory
+            for episode in podcast.episodes:
+                if any(subcategory_lower in cat.lower() for cat in episode.categories):
+                    matching_podcasts.append(podcast)
+                    break  # Found one episode, no need to check others
+
+        return matching_podcasts
 
     def _search_episodes_streaming(self, **criteria) -> List[Episode]:
         """Search for episodes in streaming mode."""
@@ -695,6 +747,12 @@ class SPORCDataset:
         if 'category' in criteria:
             category = criteria['category'].lower()
             if not any(category in cat.lower() for cat in episode.categories):
+                return False
+
+        # Filter by subcategory
+        if 'subcategory' in criteria:
+            subcategory = criteria['subcategory'].lower()
+            if not any(subcategory in cat.lower() for cat in episode.categories):
                 return False
 
         # Filter by overlap proportions
@@ -1041,3 +1099,47 @@ class SPORCDataset:
             return f"SPORCDataset(streaming=True, loaded={self._loaded})"
         return (f"SPORCDataset(podcasts={len(self._podcasts)}, episodes={len(self._episodes)}, "
                 f"loaded={self._loaded})")
+
+    def _search_podcasts_by_subcategory_streaming(self, subcategory: str) -> List[Podcast]:
+        """Search for podcasts by subcategory in streaming mode."""
+        logger.info(f"Searching for podcasts with subcategory '{subcategory}' in streaming mode...")
+
+        podcast_dict: Dict[str, Podcast] = {}
+        subcategory_lower = subcategory.lower()
+
+        for episode_dict in self._episode_data:
+            # Check if this episode has the subcategory
+            episode_categories = []
+            for i in range(1, 11):
+                category = episode_dict.get(f'category{i}')
+                if category:
+                    episode_categories.append(category)
+
+            if not any(subcategory_lower in cat.lower() for cat in episode_categories):
+                continue
+
+            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+
+            if podcast_title not in podcast_dict:
+                # Create new podcast
+                podcast = Podcast(
+                    title=podcast_title,
+                    description=episode_dict.get('podDescription', ''),
+                    rss_url=episode_dict.get('rssUrl', ''),
+                    language=episode_dict.get('language', 'en'),
+                    explicit=bool(episode_dict.get('explicit', 0)),
+                    image_url=episode_dict.get('imageUrl'),
+                    itunes_author=episode_dict.get('itunesAuthor'),
+                    itunes_owner_name=episode_dict.get('itunesOwnerName'),
+                    host=episode_dict.get('host'),
+                    created_on=episode_dict.get('createdOn'),
+                    last_update=episode_dict.get('lastUpdate'),
+                    oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
+                )
+                podcast_dict[podcast_title] = podcast
+
+            # Add this episode to the podcast
+            episode = self._create_episode_from_dict(episode_dict)
+            podcast_dict[podcast_title].add_episode(episode)
+
+        return list(podcast_dict.values())

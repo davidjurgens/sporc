@@ -44,6 +44,7 @@ Search for episodes matching specific criteria.
 - `host_name` (str or List[str], optional): Host name(s) to search for
 - `guest_name` (str or List[str], optional): Guest name(s) to search for
 - `category` (str or List[str], optional): Podcast category(ies)
+- `subcategory` (str or List[str], optional): Podcast subcategory(ies)
 - `language` (str or List[str], optional): Language code(s)
 - `min_total_duration` (float, optional): Minimum total podcast duration in hours
 - `max_overlap_prop_duration` (float, optional): Maximum overlap proportion by duration
@@ -51,6 +52,27 @@ Search for episodes matching specific criteria.
 
 **Returns:**
 - `List[Episode]`: List of matching episodes
+
+#### `search_episodes_by_subcategory(subcategory: str, **additional_criteria) -> List[Episode]`
+
+Search for episodes in a specific subcategory.
+
+**Parameters:**
+- `subcategory` (str): Subcategory to search for
+- `**additional_criteria`: Additional search criteria (same as search_episodes)
+
+**Returns:**
+- `List[Episode]`: List of episodes in the specified subcategory
+
+#### `search_podcasts_by_subcategory(subcategory: str) -> List[Podcast]`
+
+Search for podcasts that have episodes in a specific subcategory.
+
+**Parameters:**
+- `subcategory` (str): Subcategory to search for
+
+**Returns:**
+- `List[Podcast]`: List of podcasts with episodes in the specified subcategory
 
 #### `get_all_podcasts() -> List[Podcast]`
 
@@ -185,6 +207,26 @@ Proportion of overlapping speech by turn count across all episodes.
 
 Average turn duration across all episodes.
 
+#### `categories: List[str]`
+
+List of all unique categories across all episodes.
+
+#### `subcategories: List[str]`
+
+List of all unique subcategories across all episodes.
+
+#### `main_categories: List[str]`
+
+List of all unique main categories across all episodes.
+
+#### `primary_category: Optional[str]`
+
+The most common primary category across episodes.
+
+#### `primary_subcategory: Optional[str]`
+
+The most common subcategory across episodes.
+
 ### Methods
 
 #### `get_episode_by_title(title: str) -> Optional[Episode]`
@@ -253,6 +295,26 @@ Get all turns within a specific time range across all episodes.
 
 **Returns:**
 - `List[Turn]`: All turns within the specified time range
+
+#### `get_episodes_by_category(category: str) -> List[Episode]`
+
+Get all episodes in a specific category.
+
+**Parameters:**
+- `category` (str): Category to search for
+
+**Returns:**
+- `List[Episode]`: Episodes in the specified category
+
+#### `get_episodes_by_subcategory(subcategory: str) -> List[Episode]`
+
+Get all episodes in a specific subcategory.
+
+**Parameters:**
+- `subcategory` (str): Subcategory to search for
+
+**Returns:**
+- `List[Episode]`: Episodes in the specified subcategory
 
 ### Special Methods
 
@@ -582,19 +644,401 @@ Raised when search operations fail.
 - `"sv"`: Swedish
 - `"no"`: Norwegian
 - `"da"`: Danish
+- `"ja"`: Japanese
+- `"ko"`: Korean
+- `"zh"`: Chinese
+- `"ru"`: Russian
+- `"ar"`: Arabic
+- `"hi"`: Hindi
+- `"tr"`: Turkish
+- `"pl"`: Polish
+- `"cs"`: Czech
+- `"hu"`: Hungarian
+- `"fi"`: Finnish
+- `"el"`: Greek
+- `"he"`: Hebrew
+- `"th"`: Thai
+- `"vi"`: Vietnamese
+- `"id"`: Indonesian
+- `"ms"`: Malay
+- `"fa"`: Persian
+- `"ur"`: Urdu
+- `"bn"`: Bengali
+- `"ta"`: Tamil
+- `"te"`: Telugu
+- `"ml"`: Malayalam
+- `"kn"`: Kannada
+- `"gu"`: Gujarati
+- `"pa"`: Punjabi
+- `"or"`: Odia
+- `"as"`: Assamese
+- `"ne"`: Nepali
+- `"si"`: Sinhala
+- `"my"`: Burmese
+- `"km"`: Khmer
+- `"lo"`: Lao
+- `"mn"`: Mongolian
+- `"ka"`: Georgian
+- `"am"`: Amharic
+- `"sw"`: Swahili
+- `"zu"`: Zulu
+- `"af"`: Afrikaans
+- `"xh"`: Xhosa
+- `"yo"`: Yoruba
+- `"ig"`: Igbo
+- `"ha"`: Hausa
+- `"so"`: Somali
+- `"rw"`: Kinyarwanda
+- `"lg"`: Luganda
+- `"ak"`: Akan
+- `"tw"`: Twi
+- `"ee"`: Ewe
+- `"fon"`: Fon
+- `"bam"`: Bambara
+- `"wol"`: Wolof
+- `"ful"`: Fula
+- `"zul"`: Zulu
+- `"xho"`: Xhosa
+- `"afr"`: Afrikaans
+- `"nbl"`: Southern Ndebele
+- `"nso"`: Northern Sotho
+- `"sot"`: Southern Sotho
+- `"tsn"`: Tswana
+- `"tso"`: Tsonga
+- `"ven"`: Venda
+- `"ssw"`: Swati
+- `"nno"`: Norwegian Nynorsk
+- `"nob"`: Norwegian Bokmål
+- `"sme"`: Northern Sami
+- `"smj"`: Lule Sami
+- `"sma"`: Southern Sami
+- `"smn"`: Inari Sami
+- `"sms"`: Skolt Sami
+- `"cnr"`: Montenegrin
+- `"srp"`: Serbian
+- `"hrv"`: Croatian
+- `"bos"`: Bosnian
+- `"slv"`: Slovenian
+- `"mkd"`: Macedonian
+- `"bul"`: Bulgarian
+- `"ron"`: Romanian
+- `"mol"`: Moldovan
+- `"alb"`: Albanian
+- `"kat"`: Georgian
+- `"arm"`: Armenian
+- `"aze"`: Azerbaijani
+- `"kaz"`: Kazakh
+- `"kir"`: Kyrgyz
+- `"uzb"`: Uzbek
+- `"tuk"`: Turkmen
+- `"taj"`: Tajik
+- `"mon"`: Mongolian
+- `"tib"`: Tibetan
+- `"nep"`: Nepali
+- `"ben"`: Bengali
+- `"asm"`: Assamese
+- `"ori"`: Odia
+- `"mar"`: Marathi
+- `"guj"`: Gujarati
+- `"pan"`: Punjabi
+- `"kan"`: Kannada
+- `"mal"`: Malayalam
+- `"tel"`: Telugu
+- `"tam"`: Tamil
+- `"sin"`: Sinhala
+- `"mya"`: Burmese
+- `"khm"`: Khmer
+- `"lao"`: Lao
+- `"tha"`: Thai
+- `"vie"`: Vietnamese
+- `"ind"`: Indonesian
+- `"msa"`: Malay
+- `"fil"`: Filipino
+- `"jav"`: Javanese
+- `"sun"`: Sundanese
+- `"mad"`: Madurese
+- `"min"`: Minangkabau
+- `"ace"`: Acehnese
+- `"ban"`: Balinese
+- `"bug"`: Buginese
+- `"mak"`: Makassarese
+- `"sas"`: Sasak
+- `"tet"`: Tetum
+- `"tim"`: Timor
+- `"bik"`: Bikol
+- `"ceb"`: Cebuano
+- `"hil"`: Hiligaynon
+- `"ilo"`: Ilocano
+- `"pam"`: Kapampangan
+- `"pag"`: Pangasinan
+- `"war"`: Waray
+- `"tgl"`: Tagalog
+- `"bis"`: Bislama
+- `"fij"`: Fijian
+- `"hif"`: Fiji Hindi
+- `"ton"`: Tongan
+- `"smo"`: Samoan
+- `"tah"`: Tahitian
+- `"haw"`: Hawaiian
+- `"mao"`: Maori
+- `"rar"`: Rarotongan
+- `"niu"`: Niuean
+- `"tkl"`: Tokelauan
+- `"tuv"`: Tuvaluan
+- `"gil"`: Gilbertese
+- `"mri"`: Maori
 
-### Podcast Categories
+### Apple Podcasts Categories
 
-- `"education"`: Educational content
-- `"science"`: Science and technology
-- `"news"`: News and current events
-- `"music"`: Music and entertainment
-- `"comedy"`: Comedy and humor
-- `"business"`: Business and finance
-- `"health"`: Health and wellness
-- `"sports"`: Sports and athletics
-- `"politics"`: Politics and government
-- `"religion"`: Religion and spirituality
+The following categories are based on the official [Apple Podcasts categories](https://podcasters.apple.com/support/1691-apple-podcasts-categories):
+
+#### Main Categories (with subcategories)
+
+**Arts**
+- Books
+- Design
+- Fashion & Beauty
+- Food
+- Performing Arts
+- Visual Arts
+
+**Business**
+- Careers
+- Entrepreneurship
+- Investing
+- Management
+- Marketing
+- Non-Profit
+
+**Comedy**
+- Comedy Interviews
+- Improv
+- Stand-Up
+
+**Education**
+- Courses
+- How To
+- Language Learning
+- Self-Improvement
+
+**Fiction**
+- Comedy Fiction
+- Drama
+- Science Fiction
+
+**Government** (no subcategories)
+
+**History** (no subcategories)
+
+**Health & Fitness**
+- Alternative Health
+- Fitness
+- Medicine
+- Mental Health
+- Nutrition
+- Sexuality
+
+**Kids & Family**
+- Education for Kids
+- Parenting
+- Pets & Animals
+- Stories for Kids
+
+**Leisure**
+- Animation & Manga
+- Automotive
+- Aviation
+- Crafts
+- Games
+- Hobbies
+- Home & Garden
+- Video Games
+
+**Music**
+- Music Commentary
+- Music History
+- Music Interviews
+
+**News**
+- Business News
+- Daily News
+- Entertainment News
+- News Commentary
+- Politics
+- Sports News
+- Tech News
+
+**Religion & Spirituality**
+- Buddhism
+- Christianity
+- Hinduism
+- Islam
+- Judaism
+- Religion
+- Spirituality
+
+**Science**
+- Astronomy
+- Chemistry
+- Earth Sciences
+- Life Sciences
+- Mathematics
+- Natural Sciences
+- Nature
+- Physics
+- Social Sciences
+
+**Society & Culture**
+- Documentary
+- Personal Journals
+- Philosophy
+- Places & Travel
+- Relationships
+
+**Sports**
+- Baseball
+- Basketball
+- Cricket
+- Fantasy Sports
+- Football
+- Golf
+- Hockey
+- Rugby
+- Running
+- Soccer
+- Swimming
+- Tennis
+- Volleyball
+- Wilderness
+- Wrestling
+
+**Technology** (no subcategories)
+
+**True Crime** (no subcategories)
+
+**TV & Film**
+- After Shows
+- Film History
+- Film Interviews
+- Film Reviews
+- TV Reviews
+
+### Category Utility Functions
+
+#### `get_main_category(subcategory: str) -> str`
+
+Get the main category for a given subcategory.
+
+**Parameters:**
+- `subcategory` (str): The subcategory name
+
+**Returns:**
+- The main category name, or the subcategory itself if it's a main category
+
+#### `get_subcategories(main_category: str) -> List[str]`
+
+Get all subcategories for a given main category.
+
+**Parameters:**
+- `main_category` (str): The main category name
+
+**Returns:**
+- List of subcategory names
+
+#### `is_main_category(category: str) -> bool`
+
+Check if a category is a main category.
+
+**Parameters:**
+- `category` (str): The category name
+
+**Returns:**
+- True if it's a main category, False otherwise
+
+#### `is_subcategory(category: str) -> bool`
+
+Check if a category is a subcategory.
+
+**Parameters:**
+- `category` (str): The category name
+
+**Returns:**
+- True if it's a subcategory, False otherwise
+
+#### `is_valid_category(category: str) -> bool`
+
+Check if a category is valid (either main category or subcategory).
+
+**Parameters:**
+- `category` (str): The category name
+
+**Returns:**
+- True if it's a valid category, False otherwise
+
+#### `get_all_categories() -> List[str]`
+
+Get all valid categories (main categories and subcategories).
+
+**Returns:**
+- List of all category names
+
+#### `get_main_categories() -> List[str]`
+
+Get all main categories.
+
+**Returns:**
+- List of main category names
+
+#### `get_subcategories_list() -> List[str]`
+
+Get all subcategories.
+
+**Returns:**
+- List of subcategory names
+
+#### `get_subcategories_by_main_category(main_category: str) -> List[str]`
+
+Get all subcategories for a given main category.
+
+**Parameters:**
+- `main_category` (str): The main category name
+
+**Returns:**
+- List of subcategory names
+
+#### `get_subcategories_with_episodes(subcategory: str) -> List[str]`
+
+Get all subcategories that are related to a given subcategory (same main category).
+
+**Parameters:**
+- `subcategory` (str): The subcategory name
+
+**Returns:**
+- List of related subcategory names
+
+#### `get_subcategory_statistics() -> Dict[str, Any]`
+
+Get statistics about subcategories.
+
+**Returns:**
+- Dictionary containing subcategory statistics
+
+#### `search_subcategories(query: str) -> List[str]`
+
+Search for subcategories by name (case-insensitive partial match).
+
+**Parameters:**
+- `query` (str): Search query
+
+**Returns:**
+- List of matching subcategory names
+
+#### `get_popular_subcategories() -> List[str]`
+
+Get a list of commonly used subcategories.
+
+**Returns:**
+- List of popular subcategory names
 
 ### Quality Thresholds
 

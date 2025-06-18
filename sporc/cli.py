@@ -83,10 +83,13 @@ Examples:
         "--category", help="Category to search for"
     )
     search_episodes_parser.add_argument(
-        "--streaming", action="store_true", help="Use streaming mode"
+        "--subcategory", help="Subcategory to search for"
     )
     search_episodes_parser.add_argument(
         "--limit", type=int, default=10, help="Maximum number of results to show"
+    )
+    search_episodes_parser.add_argument(
+        "--streaming", action="store_true", help="Use streaming mode"
     )
 
     args = parser.parse_args()
@@ -224,6 +227,8 @@ def handle_search_episodes(args: argparse.Namespace) -> None:
         criteria['host_name'] = args.host_name
     if args.category:
         criteria['category'] = args.category
+    if args.subcategory:
+        criteria['subcategory'] = args.subcategory
 
     # Initialize dataset
     sporc = SPORCDataset(streaming=args.streaming)
