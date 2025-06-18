@@ -6,7 +6,7 @@ A Python package for working with the SPORC dataset from Hugging Face.
 
 from .dataset import SPORCDataset
 from .podcast import Podcast
-from .episode import Episode
+from .episode import Episode, TimeRangeBehavior
 from .turn import Turn
 from .exceptions import SPORCError
 from .constants import (
@@ -44,6 +44,7 @@ __all__ = [
     "Podcast",
     "Episode",
     "Turn",
+    "TimeRangeBehavior",
     "SPORCError",
     # Constants
     "APPLE_PODCAST_CATEGORIES",

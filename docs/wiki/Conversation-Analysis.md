@@ -213,30 +213,122 @@ print("Conversation patterns over time:")
 for period_name, turns in periods:
     if turns:
         avg_duration = sum(t.duration for t in turns) / len(turns)
-        speakers = set(t.speaker for t in turns)
-        print(f"  {period_name}: {len(turns)} turns, {len(speakers)} speakers, avg {avg_duration:.1f}s")
+        total_words = sum(t.word_count for t in turns)
+        print(f"  {period_name}: {len(turns)} turns, avg {avg_duration:.1f}s, {total_words} words")
 ```
 
-### Turn Timing Analysis
+### Advanced Time Range Analysis
+
+The SPORC package provides flexible time range analysis with different behaviors for handling turns that are partially within a time range:
 
 ```python
-# Analyze timing patterns
-turn_intervals = []
-for i in range(1, len(all_turns)):
-    interval = all_turns[i].start_time - all_turns[i-1].end_time
-    turn_intervals.append(interval)
+from sporc import TimeRangeBehavior
 
-if turn_intervals:
-    avg_interval = sum(turn_intervals) / len(turn_intervals)
-    print(f"Average interval between turns: {avg_interval:.1f} seconds")
+# Define a time range
+start_time = 600  # 10 minutes
+end_time = 900    # 15 minutes
 
-    # Find rapid exchanges
-    rapid_exchanges = [interval for interval in turn_intervals if interval < 1]
-    print(f"Rapid exchanges (<1s): {len(rapid_exchanges)} ({len(rapid_exchanges)/len(turn_intervals)*100:.1f}%)")
+# 1. STRICT behavior: Only include turns completely within the range
+strict_turns = episode.get_turns_by_time_range(
+    start_time, end_time,
+    behavior=TimeRangeBehavior.STRICT
+)
+print(f"Complete turns within range: {len(strict_turns)}")
 
-    # Find long pauses
-    long_pauses = [interval for interval in turn_intervals if interval > 5]
-    print(f"Long pauses (>5s): {len(long_pauses)} ({len(long_pauses)/len(turn_intervals)*100:.1f}%)")
+# 2. INCLUDE_PARTIAL behavior: Include turns that overlap with the range (default)
+partial_turns = episode.get_turns_by_time_range(
+    start_time, end_time,
+    behavior=TimeRangeBehavior.INCLUDE_PARTIAL
+)
+print(f"Overlapping turns: {len(partial_turns)}")
+
+# 3. INCLUDE_FULL_TURNS behavior: Include complete turns even if they extend beyond
+full_turns = episode.get_turns_by_time_range(
+    start_time, end_time,
+    behavior=TimeRangeBehavior.INCLUDE_FULL_TURNS
+)
+print(f"Complete turns touching range: {len(full_turns)}")
+```
+
+### Time Range with Trimming Information
+
+For precise analysis, you can get turns with trimming information:
+
+```python
+# Get turns with trimming metadata
+trimmed_data = episode.get_turns_by_time_range_with_trimming(
+    start_time, end_time,
+    behavior=TimeRangeBehavior.INCLUDE_PARTIAL
+)
+
+for turn_data in trimmed_data:
+    turn = turn_data['turn']
+    print(f"Speaker: {turn.primary_speaker}")
+    print(f"Original time: {turn.start_time/60:.1f}-{turn.end_time/60:.1f} min")
+    print(f"Trimmed time: {turn_data['trimmed_start']/60:.1f}-{turn_data['trimmed_end']/60:.1f} min")
+    print(f"Was trimmed: {turn_data['was_trimmed']}")
+    print(f"Text: {turn_data['original_text'][:100]}...")
+    print("---")
+```
+
+### Practical Time Range Use Cases
+
+```python
+# 1. Get only complete turns for analysis
+complete_turns = episode.get_turns_by_time_range(
+    600, 900,  # 10-15 minutes
+    behavior=TimeRangeBehavior.STRICT
+)
+
+# 2. Get all turns that touch a specific time range
+all_touching_turns = episode.get_turns_by_time_range(
+    600, 900,  # 10-15 minutes
+    behavior=TimeRangeBehavior.INCLUDE_FULL_TURNS
+)
+
+# 3. Analyze conversation flow in specific segments
+segments = [
+    (0, 300, "Opening"),
+    (episode.duration_seconds/2 - 150, episode.duration_seconds/2 + 150, "Middle"),
+    (episode.duration_seconds - 300, episode.duration_seconds, "Closing")
+]
+
+for start, end, name in segments:
+    turns = episode.get_turns_by_time_range(start, end, TimeRangeBehavior.INCLUDE_PARTIAL)
+    print(f"{name} segment: {len(turns)} turns")
+```
+
+### Comparing Time Range Behaviors
+
+```python
+def compare_time_range_behaviors(episode, start_time, end_time):
+    """Compare different time range behaviors."""
+
+    behaviors = [
+        ("STRICT", TimeRangeBehavior.STRICT),
+        ("INCLUDE_PARTIAL", TimeRangeBehavior.INCLUDE_PARTIAL),
+        ("INCLUDE_FULL_TURNS", TimeRangeBehavior.INCLUDE_FULL_TURNS)
+    ]
+
+    results = {}
+    for name, behavior in behaviors:
+        turns = episode.get_turns_by_time_range(start_time, end_time, behavior)
+        results[name] = {
+            'count': len(turns),
+            'total_duration': sum(t.duration for t in turns),
+            'total_words': sum(t.word_count for t in turns)
+        }
+
+    print(f"Time range: {start_time/60:.1f}-{end_time/60:.1f} minutes")
+    for name, data in results.items():
+        print(f"  {name}: {data['count']} turns, {data['total_duration']:.1f}s, {data['total_words']} words")
+
+    return results
+
+# Compare behaviors for different time ranges
+compare_time_range_behaviors(episode, 0, 300)      # First 5 minutes
+compare_time_range_behaviors(episode, 600, 900)    # 10-15 minutes
+compare_time_range_behaviors(episode, episode.duration_seconds - 300, episode.duration_seconds)  # Last 5 minutes
 ```
 
 ## Content Analysis

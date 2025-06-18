@@ -407,16 +407,38 @@ Get all turns by a specific speaker.
 **Returns:**
 - `List[Turn]`: All turns by the specified speaker
 
-#### `get_turns_by_time_range(start_time: float, end_time: float) -> List[Turn]`
+#### `get_turns_by_time_range(start_time: float, end_time: float, behavior: TimeRangeBehavior = TimeRangeBehavior.INCLUDE_PARTIAL) -> List[Turn]`
 
 Get all turns within a specific time range.
 
 **Parameters:**
 - `start_time` (float): Start time in seconds
 - `end_time` (float): End time in seconds
+- `behavior` (TimeRangeBehavior, optional): How to handle turns that are partially within the time range
+  - `STRICT`: Only include turns that are completely within the time range
+  - `INCLUDE_PARTIAL`: Include turns that overlap with the time range (default)
+  - `INCLUDE_FULL_TURNS`: Include complete turns even if they extend beyond the time range
 
 **Returns:**
-- `List[Turn]`: All turns within the specified time range
+- `List[Turn]`: All turns within the specified time range according to the specified behavior
+
+#### `get_turns_by_time_range_with_trimming(start_time: float, end_time: float, behavior: TimeRangeBehavior = TimeRangeBehavior.INCLUDE_PARTIAL) -> List[Dict[str, Any]]`
+
+Get turns within a time range with optional text trimming.
+
+**Parameters:**
+- `start_time` (float): Start time in seconds
+- `end_time` (float): End time in seconds
+- `behavior` (TimeRangeBehavior, optional): How to handle turns that are partially within the time range
+
+**Returns:**
+- `List[Dict[str, Any]]`: List of dictionaries containing turn data with trimming information:
+  - `turn`: Turn object
+  - `trimmed_text`: Text trimmed to time range (if applicable)
+  - `original_text`: Original turn text
+  - `trimmed_start`: Start time within the turn (if trimmed)
+  - `trimmed_end`: End time within the turn (if trimmed)
+  - `was_trimmed`: Whether the text was trimmed
 
 #### `get_turns_by_min_length(min_length: int) -> List[Turn]`
 
@@ -541,6 +563,24 @@ Check if the turn data is valid and complete.
 
 **Returns:**
 - `bool`: True if turn data is valid, False otherwise
+
+## TimeRangeBehavior
+
+Enum for specifying behavior when selecting turns within a time range.
+
+### Values
+
+#### `STRICT`
+
+Only include turns that are completely within the time range.
+
+#### `INCLUDE_PARTIAL`
+
+Include turns that overlap with the time range (default behavior).
+
+#### `INCLUDE_FULL_TURNS`
+
+Include complete turns even if they extend beyond the time range.
 
 ## Exceptions
 

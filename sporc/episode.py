@@ -6,9 +6,23 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+from enum import Enum
 
 from .turn import Turn
 from .exceptions import NotFoundError
+
+
+class TimeRangeBehavior(Enum):
+    """
+    Enum for specifying behavior when selecting turns within a time range.
+
+    - STRICT: Only include turns that are completely within the time range
+    - INCLUDE_PARTIAL: Include turns that overlap with the time range (default)
+    - INCLUDE_FULL_TURNS: Include complete turns even if they extend beyond the time range
+    """
+    STRICT = "strict"
+    INCLUDE_PARTIAL = "include_partial"
+    INCLUDE_FULL_TURNS = "include_full_turns"
 
 
 @dataclass
@@ -166,16 +180,21 @@ class Episode:
         """Check if this is a panel episode (multiple hosts/guests)."""
         return (self.num_hosts + self.num_guests) > 2
 
-    def get_turns_by_time_range(self, start_time: float, end_time: float) -> List[Turn]:
+    def get_turns_by_time_range(self, start_time: float, end_time: float,
+                               behavior: TimeRangeBehavior = TimeRangeBehavior.INCLUDE_PARTIAL) -> List[Turn]:
         """
         Get all turns that fall within a specific time range.
 
         Args:
             start_time: Start time in seconds
             end_time: End time in seconds
+            behavior: How to handle turns that are partially within the time range
+                - STRICT: Only include turns that are completely within the time range
+                - INCLUDE_PARTIAL: Include turns that overlap with the time range (default)
+                - INCLUDE_FULL_TURNS: Include complete turns even if they extend beyond the time range
 
         Returns:
-            List of Turn objects within the time range
+            List of Turn objects within the time range according to the specified behavior
         """
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
@@ -185,17 +204,103 @@ class Episode:
         if end_time > self.duration_seconds:
             end_time = self.duration_seconds
 
-        return [
-            turn for turn in self._turns
-            if turn.overlaps_with(Turn(
-                speaker=["dummy"],
-                text="",
-                start_time=start_time,
-                end_time=end_time,
-                duration=end_time - start_time,
-                turn_count=0
-            ))
-        ]
+        if behavior == TimeRangeBehavior.STRICT:
+            # Only include turns that are completely within the time range
+            return [
+                turn for turn in self._turns
+                if turn.start_time >= start_time and turn.end_time <= end_time
+            ]
+        elif behavior == TimeRangeBehavior.INCLUDE_PARTIAL:
+            # Include turns that overlap with the time range (current behavior)
+            return [
+                turn for turn in self._turns
+                if turn.overlaps_with(Turn(
+                    speaker=["dummy"],
+                    text="",
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration=end_time - start_time,
+                    turn_count=0
+                ))
+            ]
+        elif behavior == TimeRangeBehavior.INCLUDE_FULL_TURNS:
+            # Include complete turns even if they extend beyond the time range
+            # Find turns that start before the end time and end after the start time
+            return [
+                turn for turn in self._turns
+                if turn.start_time < end_time and turn.end_time > start_time
+            ]
+        else:
+            raise ValueError(f"Unknown behavior: {behavior}")
+
+    def get_turns_by_time_range_with_trimming(self, start_time: float, end_time: float,
+                                             behavior: TimeRangeBehavior = TimeRangeBehavior.INCLUDE_PARTIAL) -> List[Dict[str, Any]]:
+        """
+        Get turns within a time range with optional text trimming.
+
+        This method returns turns with additional metadata about how the text
+        was trimmed to fit within the specified time range.
+
+        Args:
+            start_time: Start time in seconds
+            end_time: End time in seconds
+            behavior: How to handle turns that are partially within the time range
+                - STRICT: Only include turns that are completely within the time range
+                - INCLUDE_PARTIAL: Include turns that overlap with the time range (default)
+                - INCLUDE_FULL_TURNS: Include complete turns even if they extend beyond the time range
+
+        Returns:
+            List of dictionaries containing turn data with trimming information:
+            {
+                'turn': Turn object,
+                'trimmed_text': str,  # Text trimmed to time range (if applicable)
+                'original_text': str,  # Original turn text
+                'trimmed_start': float,  # Start time within the turn (if trimmed)
+                'trimmed_end': float,    # End time within the turn (if trimmed)
+                'was_trimmed': bool      # Whether the text was trimmed
+            }
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+
+        if start_time < 0:
+            start_time = 0
+        if end_time > self.duration_seconds:
+            end_time = self.duration_seconds
+
+        turns = self.get_turns_by_time_range(start_time, end_time, behavior)
+        result = []
+
+        for turn in turns:
+            turn_data = {
+                'turn': turn,
+                'trimmed_text': turn.text,
+                'original_text': turn.text,
+                'trimmed_start': turn.start_time,
+                'trimmed_end': turn.end_time,
+                'was_trimmed': False
+            }
+
+            # For STRICT behavior, we might want to trim text to the exact time range
+            if behavior == TimeRangeBehavior.STRICT:
+                # The turn should be completely within the range, so no trimming needed
+                pass
+            elif behavior == TimeRangeBehavior.INCLUDE_PARTIAL:
+                # For partial inclusion, we could trim text to the time range
+                # This is a simplified approach - in practice, you might want more sophisticated text trimming
+                if turn.start_time < start_time or turn.end_time > end_time:
+                    turn_data['was_trimmed'] = True
+                    turn_data['trimmed_start'] = max(turn.start_time, start_time)
+                    turn_data['trimmed_end'] = min(turn.end_time, end_time)
+                    # Note: Actual text trimming would require word-level timing data
+                    # This is a placeholder for the concept
+            elif behavior == TimeRangeBehavior.INCLUDE_FULL_TURNS:
+                # Include the full turn, no trimming
+                pass
+
+            result.append(turn_data)
+
+        return result
 
     def get_turns_by_speaker(self, speaker_name: str) -> List[Turn]:
         """

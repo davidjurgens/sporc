@@ -442,6 +442,25 @@ long_turns = episode.get_turns_by_min_length(30)
 very_long_turns = episode.get_turns_by_min_length(120)
 ```
 
+### Time-Based Analysis
+
+```python
+# Get turns from specific time ranges
+turns = episode.get_turns_by_time_range(0, 180)  # First 3 minutes
+
+# Advanced time range analysis with different behaviors
+from sporc import TimeRangeBehavior
+
+# Only complete turns within the range
+strict_turns = episode.get_turns_by_time_range(300, 600, TimeRangeBehavior.STRICT)
+
+# Include turns that overlap with the range (default)
+partial_turns = episode.get_turns_by_time_range(300, 600, TimeRangeBehavior.INCLUDE_PARTIAL)
+
+# Include complete turns even if they extend beyond the range
+full_turns = episode.get_turns_by_time_range(300, 600, TimeRangeBehavior.INCLUDE_FULL_TURNS)
+```
+
 ## Data Quality Indicators
 
 The SPORC dataset includes several quality indicators that can help you filter data:
