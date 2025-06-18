@@ -544,11 +544,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you use this package in your research, please cite the original SPORC paper:
 
 ```bibtex
-@article{blitt2024sporc,
+@article{blitt2025sporc,
   title={SPORC: the Structured Podcast Open Research Corpus},
-  author={Blitt, Joshua and others},
-  journal={arXiv preprint arXiv:2411.07892},
-  year={2024}
+  author={Litterer, Ben and Jurgens, David and Card, Dallas},
+  booktitle={Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics},
+  year={2025}
 }
 ```
 
@@ -562,6 +562,5 @@ For questions, issues, or feature requests, please:
 
 ## Acknowledgments
 
-- The SPORC dataset creators at the University of Michigan
 - Hugging Face for hosting the dataset
 - The open-source community for the tools that made this package possible
