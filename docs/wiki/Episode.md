@@ -319,6 +319,113 @@ print(f"Words per minute: {metrics['words_per_minute']:.1f}")
 **Returns:**
 - `Dict[str, float]`: Dictionary containing quality metrics
 
+### Container-like Behavior
+
+The `Episode` class supports container-like behavior for accessing turns, similar to Python lists. **Note:** Turns must be loaded first using `load_turns()`.
+
+#### `len(episode) -> int`
+
+Get the number of turns in the episode.
+
+```python
+# Load turns first
+episode.load_turns(turns_data)
+
+# Get turn count
+turn_count = len(episode)
+print(f"Episode has {turn_count} turns")
+```
+
+**Returns:**
+- `int`: Number of turns in the episode
+
+**Raises:**
+- `RuntimeError`: If turns are not loaded
+
+#### `episode[index] -> Turn`
+
+Get a turn by index (0-based).
+
+```python
+# Get first turn
+first_turn = episode[0]
+print(f"First turn: {first_turn.text[:50]}...")
+
+# Get last turn
+last_turn = episode[-1]
+print(f"Last turn: {last_turn.text[:50]}...")
+
+# Get specific turn
+turn_5 = episode[5]
+print(f"Turn 5: {turn_5.text[:50]}...")
+```
+
+**Parameters:**
+- `index` (int): Turn index (supports negative indexing)
+
+**Returns:**
+- `Turn`: The turn at the specified index
+
+**Raises:**
+- `RuntimeError`: If turns are not loaded
+- `IndexError`: If index is out of range
+
+#### `for turn in episode:`
+
+Iterate over all turns in the episode.
+
+```python
+# Iterate over all turns
+for i, turn in enumerate(episode):
+    print(f"Turn {i}: {turn.speaker} - {turn.text[:50]}...")
+
+# List comprehension
+long_turns = [turn for turn in episode if turn.duration > 30]
+print(f"Found {len(long_turns)} turns longer than 30 seconds")
+
+# Sum operations
+total_duration = sum(turn.duration for turn in episode)
+print(f"Total speaking time: {total_duration / 60:.1f} minutes")
+```
+
+**Raises:**
+- `RuntimeError`: If turns are not loaded
+
+### Container Usage Examples
+
+```python
+# Check if episode has turns
+if len(episode) > 0:
+    print(f"Episode has {len(episode)} turns")
+
+    # Access first and last turns
+    first_turn = episode[0]
+    last_turn = episode[-1]
+
+    print(f"First turn by {first_turn.speaker}: {first_turn.text[:50]}...")
+    print(f"Last turn by {last_turn.speaker}: {last_turn.text[:50]}...")
+
+# Iterate with index
+for i, turn in enumerate(episode):
+    if turn.duration > 60:  # Long turns
+        print(f"Long turn {i}: {turn.speaker} ({turn.duration:.1f}s)")
+
+# Filter turns
+host_turns = [turn for turn in episode if turn.inferred_speaker_role == 'host']
+guest_turns = [turn for turn in episode if turn.inferred_speaker_role == 'guest']
+
+print(f"Host turns: {len(host_turns)}")
+print(f"Guest turns: {len(guest_turns)}")
+
+# Statistical operations
+turn_durations = [turn.duration for turn in episode]
+avg_duration = sum(turn_durations) / len(turn_durations)
+max_duration = max(turn_durations)
+
+print(f"Average turn duration: {avg_duration:.1f} seconds")
+print(f"Longest turn: {max_duration:.1f} seconds")
+```
+
 ## Usage Examples
 
 ### Basic Episode Information

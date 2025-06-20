@@ -299,6 +299,116 @@ print(f"Early turns: {len(early_turns)}")
 **Returns:**
 - `List[Turn]`: All turns within the specified time range
 
+### Container-like Behavior
+
+The `Podcast` class supports container-like behavior for accessing episodes, similar to Python lists. Episodes are accessed in chronological order.
+
+#### `len(podcast) -> int`
+
+Get the number of episodes in the podcast.
+
+```python
+episode_count = len(podcast)
+print(f"Podcast has {episode_count} episodes")
+```
+
+**Returns:**
+- `int`: Number of episodes in the podcast
+
+#### `podcast[index] -> Episode`
+
+Get an episode by index (0-based, chronological order).
+
+```python
+# Get first episode
+first_episode = podcast[0]
+print(f"First episode: {first_episode.title}")
+
+# Get last episode
+last_episode = podcast[-1]
+print(f"Last episode: {last_episode.title}")
+
+# Get specific episode
+episode_5 = podcast[5]
+print(f"Episode 5: {episode_5.title}")
+```
+
+**Parameters:**
+- `index` (int): Episode index (supports negative indexing)
+
+**Returns:**
+- `Episode`: The episode at the specified index
+
+**Raises:**
+- `IndexError`: If index is out of range
+
+#### `for episode in podcast:`
+
+Iterate over all episodes in chronological order.
+
+```python
+# Iterate over all episodes
+for i, episode in enumerate(podcast):
+    print(f"Episode {i}: {episode.title} ({episode.duration_minutes:.1f} min)")
+
+# List comprehension
+long_episodes = [ep for ep in podcast if ep.duration_minutes > 60]
+print(f"Found {len(long_episodes)} episodes longer than 1 hour")
+
+# Sum operations
+total_duration = sum(ep.duration_seconds for ep in podcast)
+print(f"Total podcast duration: {total_duration / 3600:.1f} hours")
+```
+
+### Container Usage Examples
+
+```python
+# Check if podcast has episodes
+if len(podcast) > 0:
+    print(f"Podcast has {len(podcast)} episodes")
+
+    # Access first and last episodes
+    first_episode = podcast[0]
+    last_episode = podcast[-1]
+
+    print(f"First episode: {first_episode.title}")
+    print(f"Last episode: {last_episode.title}")
+
+# Iterate with index
+for i, episode in enumerate(podcast):
+    if episode.duration_minutes > 60:  # Long episodes
+        print(f"Long episode {i}: {episode.title} ({episode.duration_minutes:.1f} min)")
+
+# Filter episodes
+interview_episodes = [ep for ep in podcast if ep.is_interview]
+solo_episodes = [ep for ep in podcast if ep.is_solo]
+
+print(f"Interview episodes: {len(interview_episodes)}")
+print(f"Solo episodes: {len(solo_episodes)}")
+
+# Statistical operations
+episode_durations = [ep.duration_minutes for ep in podcast]
+avg_duration = sum(episode_durations) / len(episode_durations)
+max_duration = max(episode_durations)
+
+print(f"Average episode duration: {avg_duration:.1f} minutes")
+print(f"Longest episode: {max_duration:.1f} minutes")
+
+# Find episodes by criteria
+recent_episodes = [ep for ep in podcast if ep.episode_date and ep.episode_date.year >= 2023]
+print(f"Recent episodes (2023+): {len(recent_episodes)}")
+
+# Access specific episodes
+if len(podcast) >= 3:
+    third_episode = podcast[2]
+    print(f"Third episode: {third_episode.title}")
+
+    # Get episodes from the middle
+    mid_point = len(podcast) // 2
+    middle_episode = podcast[mid_point]
+    print(f"Middle episode: {middle_episode.title}")
+```
+
 ## Usage Examples
 
 ### Basic Podcast Information

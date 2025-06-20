@@ -401,7 +401,7 @@ class TestStreamingMode:
 
     @patch('sporc.dataset.load_dataset')
     def test_streaming_iterate_episodes_error(self, mock_load_dataset):
-        """Test that iterate_episodes() raises error in memory mode."""
+        """Test that iterate_episodes() works in both streaming and memory modes."""
         # Mock dataset
         mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
@@ -411,9 +411,9 @@ class TestStreamingMode:
 
         dataset = SPORCDataset(streaming=False)
 
-        # Test that iterate_episodes() raises RuntimeError
-        with pytest.raises(RuntimeError, match="iterate_episodes\\(\\) is only available in streaming mode"):
-            list(dataset.iterate_episodes())
+        # Test that iterate_episodes() works in memory mode (should not raise error)
+        episodes = list(dataset.iterate_episodes())
+        assert len(episodes) == 0  # Empty dataset
 
     @patch('sporc.dataset.load_dataset')
     def test_streaming_iterate_podcasts_error(self, mock_load_dataset):

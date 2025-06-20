@@ -375,6 +375,101 @@ class TestEpisode:
         assert stats['avg_turn_duration'] == 30.0
         assert stats['avg_words_per_turn'] == 3.5
 
+    def test_episode_indexing_and_iteration(self):
+        """Test Episode indexing and iteration functionality."""
+        episode = Episode(
+            title="Test Episode",
+            description="A test episode",
+            mp3_url="https://example.com/test.mp3",
+            duration_seconds=600.0,  # 10 minutes
+            transcript="Transcript",
+            podcast_title="Test Podcast",
+            podcast_description="A test podcast",
+            rss_url="https://example.com/rss.xml",
+            host_predicted_names=["John Doe"],
+            guest_predicted_names=[],
+            main_ep_speakers=["SPEAKER_00"]
+        )
+
+        # Create some test turns
+        turns_data = [
+            {
+                'mp3url': 'https://example.com/test.mp3',
+                'speaker': ['SPEAKER_00'],
+                'turnText': 'First turn',
+                'startTime': 0.0,
+                'endTime': 30.0,
+                'duration': 30.0,
+                'turnCount': 1,
+                'inferredSpeakerRole': 'host',
+                'inferredSpeakerName': 'John Doe'
+            },
+            {
+                'mp3url': 'https://example.com/test.mp3',
+                'speaker': ['SPEAKER_00'],
+                'turnText': 'Second turn',
+                'startTime': 30.0,
+                'endTime': 60.0,
+                'duration': 30.0,
+                'turnCount': 2,
+                'inferredSpeakerRole': 'host',
+                'inferredSpeakerName': 'John Doe'
+            },
+            {
+                'mp3url': 'https://example.com/test.mp3',
+                'speaker': ['SPEAKER_00'],
+                'turnText': 'Third turn',
+                'startTime': 60.0,
+                'endTime': 90.0,
+                'duration': 30.0,
+                'turnCount': 3,
+                'inferredSpeakerRole': 'host',
+                'inferredSpeakerName': 'John Doe'
+            }
+        ]
+
+        episode.load_turns(turns_data)
+
+        # Test length
+        assert len(episode) == 3
+
+        # Test indexing
+        assert episode[0].text == "First turn"
+        assert episode[1].text == "Second turn"
+        assert episode[2].text == "Third turn"
+
+        # Test negative indexing
+        assert episode[-1].text == "Third turn"
+        assert episode[-2].text == "Second turn"
+
+        # Test iteration
+        turn_texts = [turn.text for turn in episode]
+        assert turn_texts == ["First turn", "Second turn", "Third turn"]
+
+        # Test that indexing raises error when turns not loaded
+        episode_no_turns = Episode(
+            title="Test Episode",
+            description="A test episode",
+            mp3_url="https://example.com/test.mp3",
+            duration_seconds=600.0,
+            transcript="Transcript",
+            podcast_title="Test Podcast",
+            podcast_description="A test podcast",
+            rss_url="https://example.com/rss.xml",
+            host_predicted_names=["John Doe"],
+            guest_predicted_names=[],
+            main_ep_speakers=["SPEAKER_00"]
+        )
+
+        with pytest.raises(RuntimeError, match="Turns not loaded"):
+            len(episode_no_turns)
+
+        with pytest.raises(RuntimeError, match="Turns not loaded"):
+            episode_no_turns[0]
+
+        with pytest.raises(RuntimeError, match="Turns not loaded"):
+            list(episode_no_turns)
+
 
 class TestPodcast:
     """Test the Podcast class."""
@@ -564,6 +659,87 @@ class TestPodcast:
         assert stats['episode_types']['interview'] == 1
         assert stats['host_names'] == ["John Doe"]
         assert stats['guest_names'] == ["Jane Smith"]
+
+    def test_podcast_indexing(self):
+        """Test Podcast indexing functionality."""
+        podcast = Podcast(
+            title="Test Podcast",
+            description="A test podcast",
+            rss_url="https://example.com/rss.xml"
+        )
+
+        # Create episodes
+        episode1 = Episode(
+            title="Episode 1",
+            description="First episode",
+            mp3_url="https://example.com/ep1.mp3",
+            duration_seconds=1800.0,
+            transcript="Transcript 1",
+            podcast_title="Test Podcast",
+            podcast_description="A test podcast",
+            rss_url="https://example.com/rss.xml",
+            host_predicted_names=["John Doe"],
+            guest_predicted_names=[],
+            main_ep_speakers=["SPEAKER_00"]
+        )
+
+        episode2 = Episode(
+            title="Episode 2",
+            description="Second episode",
+            mp3_url="https://example.com/ep2.mp3",
+            duration_seconds=3600.0,
+            transcript="Transcript 2",
+            podcast_title="Test Podcast",
+            podcast_description="A test podcast",
+            rss_url="https://example.com/rss.xml",
+            host_predicted_names=["John Doe"],
+            guest_predicted_names=["Jane Smith"],
+            main_ep_speakers=["SPEAKER_00", "SPEAKER_01"]
+        )
+
+        episode3 = Episode(
+            title="Episode 3",
+            description="Third episode",
+            mp3_url="https://example.com/ep3.mp3",
+            duration_seconds=2700.0,
+            transcript="Transcript 3",
+            podcast_title="Test Podcast",
+            podcast_description="A test podcast",
+            rss_url="https://example.com/rss.xml",
+            host_predicted_names=["John Doe"],
+            guest_predicted_names=[],
+            main_ep_speakers=["SPEAKER_00"]
+        )
+
+        podcast.add_episode(episode1)
+        podcast.add_episode(episode2)
+        podcast.add_episode(episode3)
+
+        # Test indexing
+        assert podcast[0].title == "Episode 1"
+        assert podcast[1].title == "Episode 2"
+        assert podcast[2].title == "Episode 3"
+
+        # Test negative indexing
+        assert podcast[-1].title == "Episode 3"
+        assert podcast[-2].title == "Episode 2"
+
+        # Test that indexing raises IndexError for out of bounds
+        with pytest.raises(IndexError):
+            podcast[3]
+
+        with pytest.raises(IndexError):
+            podcast[-4]
+
+        # Test that indexing works with empty podcast
+        empty_podcast = Podcast(
+            title="Empty Podcast",
+            description="An empty podcast",
+            rss_url="https://example.com/empty.xml"
+        )
+
+        with pytest.raises(IndexError):
+            empty_podcast[0]
 
 
 class TestSPORCDataset:
