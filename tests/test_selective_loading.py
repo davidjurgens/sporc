@@ -3,7 +3,7 @@ Test suite for selective loading functionality in the SPORC package.
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 from sporc import SPORCDataset, SPORCError
 
@@ -15,7 +15,7 @@ class TestSelectiveLoading:
     def test_selective_loading_initialization(self, mock_load_dataset):
         """Test SPORCDataset initialization with selective loading."""
         # Mock the dataset loading
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Education Podcast',
@@ -92,9 +92,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 2
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -115,7 +117,7 @@ class TestSelectiveLoading:
     def test_selective_loading_by_category(self, mock_load_dataset):
         """Test selective loading by category."""
         # Mock dataset with episodes from different categories
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Education Podcast',
@@ -192,9 +194,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 2
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -218,7 +222,7 @@ class TestSelectiveLoading:
     def test_selective_loading_by_host(self, mock_load_dataset):
         """Test selective loading by host."""
         # Mock dataset with episodes from different hosts
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'John Podcast',
@@ -295,9 +299,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 2
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -321,7 +327,7 @@ class TestSelectiveLoading:
     def test_selective_loading_by_episode_count(self, mock_load_dataset):
         """Test selective loading by episode count."""
         # Mock dataset with podcasts having different episode counts
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             # Podcast with 1 episode
             {
@@ -437,9 +443,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 3
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -457,7 +465,7 @@ class TestSelectiveLoading:
     def test_selective_loading_by_duration(self, mock_load_dataset):
         """Test selective loading by total duration."""
         # Mock dataset with podcasts having different total durations
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             # Podcast with 1 hour total duration
             {
@@ -573,9 +581,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 3
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -593,7 +603,7 @@ class TestSelectiveLoading:
     def test_selective_loading_complex_filtering(self, mock_load_dataset):
         """Test selective loading with complex filtering criteria."""
         # Mock dataset with various podcasts
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             # English education podcast with 3 episodes
             {
@@ -746,9 +756,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 4
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -771,7 +783,7 @@ class TestSelectiveLoading:
     def test_selective_loading_fast_access(self, mock_load_dataset):
         """Test that selective loading provides fast access to loaded subset."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -811,9 +823,11 @@ class TestSelectiveLoading:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 1
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -849,10 +863,12 @@ class TestSelectiveLoading:
     def test_selective_loading_memory_mode_warning(self, mock_load_dataset):
         """Test that selective loading warns when used in memory mode."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
-        mock_speaker_turn_data = Mock()
+        mock_episode_data.__len__.return_value = 0
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
         dataset = SPORCDataset(streaming=False)  # Memory mode

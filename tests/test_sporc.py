@@ -18,6 +18,7 @@ from sporc import (
     DatasetAccessError,
     NotFoundError
 )
+from sporc.episode import TimeRangeBehavior
 
 
 class TestTurn:
@@ -313,7 +314,7 @@ class TestEpisode:
         assert len(all_turns) == 2
 
         # Test getting turns by time range
-        early_turns = episode.get_turns_by_time_range(0, 45)
+        early_turns = episode.get_turns_by_time_range(0, 45, behavior=TimeRangeBehavior.STRICT)
         assert len(early_turns) == 1
 
         # Test getting turns by speaker
@@ -572,7 +573,7 @@ class TestSPORCDataset:
     def test_dataset_initialization(self, mock_load_dataset):
         """Test SPORCDataset initialization."""
         # Mock the dataset loading
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -613,7 +614,9 @@ class TestSPORCDataset:
             }
         ])
 
-        mock_speaker_turn_data = Mock()
+        mock_episode_data.__len__.return_value = 1
+
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([
             {
                 'mp3url': 'https://example.com/test.mp3',
@@ -627,6 +630,8 @@ class TestSPORCDataset:
                 'inferredSpeakerName': 'John Doe'
             }
         ])
+
+        mock_speaker_turn_data.__len__.return_value = 1
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -651,7 +656,7 @@ class TestSPORCDataset:
     def test_search_podcast(self, mock_load_dataset):
         """Test podcast search functionality."""
         # Mock dataset with multiple podcasts
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast 1',
@@ -729,7 +734,9 @@ class TestSPORCDataset:
             }
         ])
 
-        mock_speaker_turn_data = Mock()
+        mock_episode_data.__len__.return_value = 2
+
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
@@ -756,7 +763,7 @@ class TestSPORCDataset:
     def test_search_episodes(self, mock_load_dataset):
         """Test episode search functionality."""
         # Mock dataset with episodes
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -834,7 +841,9 @@ class TestSPORCDataset:
             }
         ])
 
-        mock_speaker_turn_data = Mock()
+        mock_episode_data.__len__.return_value = 2
+
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
@@ -876,7 +885,7 @@ class TestSPORCDataset:
     def test_dataset_statistics(self, mock_load_dataset):
         """Test dataset statistics."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -917,7 +926,9 @@ class TestSPORCDataset:
             }
         ])
 
-        mock_speaker_turn_data = Mock()
+        mock_episode_data.__len__.return_value = 1
+
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]

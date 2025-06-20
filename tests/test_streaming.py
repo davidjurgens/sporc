@@ -3,7 +3,7 @@ Test suite for streaming mode functionality in the SPORC package.
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 from sporc import SPORCDataset, SPORCError
 
@@ -15,7 +15,7 @@ class TestStreamingMode:
     def test_streaming_initialization(self, mock_load_dataset):
         """Test SPORCDataset initialization in streaming mode."""
         # Mock the dataset loading
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -55,9 +55,11 @@ class TestStreamingMode:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 1
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -73,7 +75,7 @@ class TestStreamingMode:
     def test_streaming_search_podcast(self, mock_load_dataset):
         """Test podcast search in streaming mode."""
         # Mock dataset with episodes
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -113,9 +115,11 @@ class TestStreamingMode:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 1
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -130,7 +134,7 @@ class TestStreamingMode:
     def test_streaming_search_episodes(self, mock_load_dataset):
         """Test episode search in streaming mode."""
         # Mock dataset with episodes
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -170,9 +174,11 @@ class TestStreamingMode:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 1
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -187,7 +193,7 @@ class TestStreamingMode:
     def test_streaming_iterate_episodes(self, mock_load_dataset):
         """Test episode iteration in streaming mode."""
         # Mock dataset with episodes
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Test Podcast',
@@ -264,9 +270,11 @@ class TestStreamingMode:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 2
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -282,7 +290,7 @@ class TestStreamingMode:
     def test_streaming_iterate_podcasts(self, mock_load_dataset):
         """Test podcast iteration in streaming mode."""
         # Mock dataset with episodes from different podcasts
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([
             {
                 'podTitle': 'Podcast 1',
@@ -359,9 +367,11 @@ class TestStreamingMode:
                 'category10': None
             }
         ])
+        mock_episode_data.__len__.return_value = 2
 
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data.__len__.return_value = 0
 
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -377,9 +387,9 @@ class TestStreamingMode:
     def test_streaming_length_error(self, mock_load_dataset):
         """Test that len() raises error in streaming mode."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -393,9 +403,9 @@ class TestStreamingMode:
     def test_streaming_iterate_episodes_error(self, mock_load_dataset):
         """Test that iterate_episodes() raises error in memory mode."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
@@ -409,9 +419,9 @@ class TestStreamingMode:
     def test_streaming_iterate_podcasts_error(self, mock_load_dataset):
         """Test that iterate_podcasts() raises error in memory mode."""
         # Mock dataset
-        mock_episode_data = Mock()
+        mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
-        mock_speaker_turn_data = Mock()
+        mock_speaker_turn_data = MagicMock()
         mock_speaker_turn_data.__iter__ = lambda x: iter([])
         mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
 
