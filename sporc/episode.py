@@ -233,7 +233,7 @@ class Episode:
                 turn for turn in self._turns
                 if turn.overlaps_with(Turn(
                     speaker=["dummy"],
-                    text="",
+                    text="dummy text for overlap checking",
                     start_time=start_time,
                     end_time=end_time,
                     duration=end_time - start_time,
@@ -513,3 +513,21 @@ class Episode:
         return (f"Episode(title='{self.title}', duration_seconds={self.duration_seconds}, "
                 f"podcast_title='{self.podcast_title}', num_hosts={self.num_hosts}, "
                 f"num_guests={self.num_guests})")
+
+    def __len__(self) -> int:
+        """Return the number of turns in this episode."""
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+        return len(self._turns)
+
+    def __getitem__(self, index: int) -> Turn:
+        """Get a turn by index."""
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+        return self._turns[index]
+
+    def __iter__(self):
+        """Iterate over turns in this episode."""
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+        return iter(self._turns)

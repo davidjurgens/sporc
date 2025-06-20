@@ -465,5 +465,5 @@ class Podcast:
         return iter(self.episodes)
 
     def __getitem__(self, index):
-        """Get an episode by index."""
+        """Get an episode by index (chronological order)."""
         return self.episodes[index]
