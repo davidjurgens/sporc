@@ -8,7 +8,7 @@ from .dataset import SPORCDataset
 from .podcast import Podcast
 from .episode import Episode, TimeRangeBehavior
 from .turn import Turn
-from .exceptions import SPORCError
+from .exceptions import SPORCError, DatasetAccessError, AuthenticationError, NotFoundError
 from .constants import (
     APPLE_PODCAST_CATEGORIES,
     ALL_CATEGORIES,
@@ -46,6 +46,9 @@ __all__ = [
     "Turn",
     "TimeRangeBehavior",
     "SPORCError",
+    "DatasetAccessError",
+    "AuthenticationError",
+    "NotFoundError",
     # Constants
     "APPLE_PODCAST_CATEGORIES",
     "ALL_CATEGORIES",
