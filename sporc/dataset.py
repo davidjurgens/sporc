@@ -65,7 +65,7 @@ class LocalSPORCDataset:
         total_files = len(self.file_paths)
 
         for i, (file_type, file_path) in enumerate(self.file_paths.items()):
-            logger.info(f"Loading {file_type} from {file_path}...")
+            logger.info(f"Loading {file_type}...")
 
             try:
                 with gzip.open(file_path, 'rt', encoding='utf-8') as f:
@@ -253,25 +253,11 @@ class SPORCDataset:
         start_time = time.time()
 
         try:
-            logger.info("=" * 80)
-            logger.info("SPORC DATASET LOADING FROM LOCAL FILES")
-            logger.info("=" * 80)
             logger.info(f"Loading SPORC dataset from local directory: {self.local_data_dir}")
-            logger.info(f"Streaming mode: {self.streaming}")
-            logger.info(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # Validate local files
-            logger.info("Validating local files...")
             file_paths = self._validate_local_files()
             logger.info("✓ All required files found")
-
-            # Log file information
-            for file_type, file_path in file_paths.items():
-                try:
-                    file_size = os.path.getsize(file_path) / (1024**3)  # GB
-                    logger.info(f"  {file_type}: {file_path} ({file_size:.2f} GB)")
-                except Exception as e:
-                    logger.debug(f"Could not determine size of {file_path}: {e}")
 
             # Create a custom dataset object that wraps the local files
             self._dataset = LocalSPORCDataset(
@@ -280,11 +266,7 @@ class SPORCDataset:
             )
 
             total_loading_time = time.time() - start_time
-            logger.info("-" * 60)
-            logger.info("LOCAL LOADING SUMMARY")
-            logger.info("-" * 60)
-            logger.info(f"Total loading time: {total_loading_time:.2f} seconds")
-            logger.info("✓ Local dataset loaded successfully")
+            logger.info(f"✓ Local dataset loaded successfully in {total_loading_time:.2f} seconds")
 
             if self.streaming:
                 logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
@@ -297,11 +279,7 @@ class SPORCDataset:
 
         except Exception as e:
             total_time = time.time() - start_time
-            logger.error("=" * 80)
-            logger.error("LOCAL DATASET LOADING FAILED")
-            logger.error("=" * 80)
-            logger.error(f"Total time before failure: {total_time:.2f} seconds")
-            logger.error(f"Error: {e}")
+            logger.error(f"Failed to load local dataset after {total_time:.2f} seconds: {e}")
             raise DatasetAccessError(f"Failed to load local dataset: {e}") from e
 
     def _load_dataset_with_flexible_schema(self):
@@ -475,58 +453,29 @@ class SPORCDataset:
         start_time = time.time()
 
         try:
-            logger.info("=" * 80)
-            logger.info("SPORC DATASET LOADING PROCESS")
-            logger.info("=" * 80)
             logger.info(f"Loading SPORC dataset from Hugging Face (streaming={self.streaming})...")
-            logger.info(f"Dataset ID: {self.DATASET_ID}")
-            logger.info(f"Split: {self.EPISODE_SPLIT}")
-            logger.info(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # Log cache directory information
             if self.custom_cache_dir:
                 logger.info(f"Using custom cache directory: {self.custom_cache_dir}")
-                logger.info("Attempting to load from pre-existing cache...")
-
-                # Check if the custom cache directory exists
                 if not os.path.exists(self.custom_cache_dir):
                     logger.warning(f"Custom cache directory does not exist: {self.custom_cache_dir}")
-                    logger.info("Will attempt to download to this location...")
                 else:
                     logger.info("✓ Custom cache directory found")
-                    # Check cache size
-                    try:
-                        import shutil
-                        cache_size = shutil.disk_usage(self.custom_cache_dir).used / (1024**3)  # GB
-                        logger.info(f"Cache directory size: {cache_size:.2f} GB")
-                    except Exception as e:
-                        logger.debug(f"Could not determine cache size: {e}")
+            elif self.cache_dir:
+                logger.info(f"Using specified cache directory: {self.cache_dir}")
             else:
-                if self.cache_dir:
-                    logger.info(f"Using specified cache directory: {self.cache_dir}")
-                else:
-                    logger.info("Using default Hugging Face cache directory")
-                    # Show default cache location
-                    try:
-                        from huggingface_hub import constants
-                        default_cache = constants.DEFAULT_CACHE_DIR
-                        logger.info(f"Default cache location: {default_cache}")
-                    except Exception as e:
-                        logger.debug(f"Could not determine default cache location: {e}")
+                logger.info("Using default Hugging Face cache directory")
 
             if not self.custom_cache_dir:
                 logger.info("This may take several minutes on first run as the dataset needs to be downloaded.")
-                logger.info("Dataset size: ~22GB. Subsequent runs will be much faster.")
 
             # Try multiple loading strategies
             loading_successful = False
             strategy_start_time = time.time()
 
             # Strategy 1: Standard loading
-            logger.info("-" * 60)
-            logger.info("STRATEGY 1: Standard loading")
-            logger.info("-" * 60)
-            logger.info("Connecting to Hugging Face and checking dataset availability...")
+            logger.info("Attempting standard loading...")
 
             try:
                 strategy_1_start = time.time()
@@ -544,9 +493,8 @@ class SPORCDataset:
 
             except Exception as e:
                 strategy_1_time = time.time() - strategy_1_start
-                logger.warning(f"✗ Standard loading failed after {strategy_1_time:.2f} seconds")
+                logger.warning(f"Standard loading failed after {strategy_1_time:.2f} seconds")
                 if "JSON parse error" in str(e) or "Column changed from" in str(e):
-                    logger.warning("Standard loading failed due to data type inconsistencies.")
                     logger.info("Trying alternative loading methods...")
                 else:
                     logger.error(f"Unexpected error in standard loading: {e}")
@@ -554,9 +502,7 @@ class SPORCDataset:
 
             # Strategy 2: Flexible schema loading
             if not loading_successful:
-                logger.info("-" * 60)
-                logger.info("STRATEGY 2: Flexible schema loading")
-                logger.info("-" * 60)
+                logger.info("Attempting flexible schema loading...")
                 strategy_2_start = time.time()
                 if self._load_dataset_with_flexible_schema():
                     strategy_2_time = time.time() - strategy_2_start
@@ -564,14 +510,11 @@ class SPORCDataset:
                     logger.info(f"✓ Dataset loaded successfully with flexible schema in {strategy_2_time:.2f} seconds")
                 else:
                     strategy_2_time = time.time() - strategy_2_start
-                    logger.warning(f"✗ Flexible schema loading failed after {strategy_2_time:.2f} seconds")
+                    logger.warning(f"Flexible schema loading failed after {strategy_2_time:.2f} seconds")
 
             # Strategy 3: Alternative configuration
             if not loading_successful:
-                logger.info("-" * 60)
-                logger.info("STRATEGY 3: Alternative configuration")
-                logger.info("-" * 60)
-                logger.info("Trying alternative configuration...")
+                logger.info("Attempting alternative configuration...")
                 try:
                     strategy_3_start = time.time()
                     self._dataset = load_dataset(
@@ -588,16 +531,12 @@ class SPORCDataset:
                     logger.info(f"✓ Dataset loaded successfully with alternative configuration in {strategy_3_time:.2f} seconds")
                 except Exception as e:
                     strategy_3_time = time.time() - strategy_3_start
-                    logger.error(f"✗ All loading strategies failed after {strategy_3_time:.2f} seconds")
+                    logger.error(f"All loading strategies failed after {strategy_3_time:.2f} seconds")
                     logger.error(f"Final error: {e}")
                     raise e
 
             total_loading_time = time.time() - strategy_start_time
-            logger.info("-" * 60)
-            logger.info("LOADING SUMMARY")
-            logger.info("-" * 60)
-            logger.info(f"Total loading time: {total_loading_time:.2f} seconds")
-            logger.info(f"Loading successful: {'✓ YES' if loading_successful else '✗ NO'}")
+            logger.info(f"✓ Dataset loading completed in {total_loading_time:.2f} seconds")
 
             if self.streaming:
                 logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
@@ -610,11 +549,7 @@ class SPORCDataset:
 
         except Exception as e:
             total_time = time.time() - start_time
-            logger.error("=" * 80)
-            logger.error("DATASET LOADING FAILED")
-            logger.error("=" * 80)
-            logger.error(f"Total time before failure: {total_time:.2f} seconds")
-            logger.error(f"Error: {e}")
+            logger.error(f"Failed to load dataset after {total_time:.2f} seconds: {e}")
 
             # Handle authentication and other errors
             if "401" in str(e) or "authentication" in str(e).lower():
@@ -653,15 +588,13 @@ class SPORCDataset:
             return
 
         logger.info("Processing dataset into Podcast and Episode objects...")
-        logger.info("This may take a few minutes for the first time...")
 
         # Separate episode data from speaker turn data
-        logger.info("Step 1: Separating episode data from speaker turn data...")
+        logger.info("Separating episode data from speaker turn data...")
         separation_start = time.time()
         episode_data = []
         speaker_turns = []
 
-        logger.info("Scanning through dataset records...")
         record_count = 0
         episode_count = 0
         turn_count = 0
@@ -682,12 +615,10 @@ class SPORCDataset:
 
         separation_time = time.time() - separation_start
         logger.info(f"✓ Separation completed in {separation_time:.2f} seconds")
-        logger.info(f"  Total records processed: {record_count:,}")
-        logger.info(f"  Episode records found: {len(episode_data):,}")
-        logger.info(f"  Speaker turn records found: {len(speaker_turns):,}")
+        logger.info(f"  Episode records: {len(episode_data):,}, Speaker turn records: {len(speaker_turns):,}")
 
         # Group episodes by podcast
-        logger.info("Step 2: Grouping episodes by podcast...")
+        logger.info("Grouping episodes by podcast...")
         grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -701,15 +632,8 @@ class SPORCDataset:
         logger.info(f"✓ Grouping completed in {grouping_time:.2f} seconds")
         logger.info(f"  Episodes grouped into {len(podcast_groups)} podcasts")
 
-        # Calculate podcast statistics
-        episode_counts = [len(episodes) for episodes in podcast_groups.values()]
-        if episode_counts:
-            logger.info(f"  Average episodes per podcast: {sum(episode_counts) / len(episode_counts):.1f}")
-            logger.info(f"  Min episodes per podcast: {min(episode_counts)}")
-            logger.info(f"  Max episodes per podcast: {max(episode_counts)}")
-
         # Create Podcast and Episode objects
-        logger.info("Step 3: Creating Podcast and Episode objects...")
+        logger.info("Creating Podcast and Episode objects...")
         creation_start = time.time()
         created_podcasts = 0
         created_episodes = 0
@@ -747,11 +671,10 @@ class SPORCDataset:
 
         creation_time = time.time() - creation_start
         logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
-        logger.info(f"  Created {created_podcasts} Podcast objects")
-        logger.info(f"  Created {created_episodes} Episode objects")
+        logger.info(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
 
         # Load turns for all episodes
-        logger.info("Step 4: Loading speaker turn data for episodes...")
+        logger.info("Loading speaker turn data for episodes...")
         turns_start = time.time()
         self._load_turns_for_episodes(speaker_turns)
         turns_time = time.time() - turns_start
@@ -760,21 +683,8 @@ class SPORCDataset:
         self._loaded = True
         total_process_time = time.time() - process_start_time
 
-        logger.info("=" * 60)
-        logger.info("DATA PROCESSING COMPLETED")
-        logger.info("=" * 60)
-        logger.info(f"Total processing time: {total_process_time:.2f} seconds")
-        logger.info(f"Breakdown:")
-        logger.info(f"  - Separation: {separation_time:.2f}s ({separation_time/total_process_time*100:.1f}%)")
-        logger.info(f"  - Grouping: {grouping_time:.2f}s ({grouping_time/total_process_time*100:.1f}%)")
-        logger.info(f"  - Object creation: {creation_time:.2f}s ({creation_time/total_process_time*100:.1f}%)")
-        logger.info(f"  - Turn loading: {turns_time:.2f}s ({turns_time/total_process_time*100:.1f}%)")
-        logger.info(f"Final dataset statistics:")
-        logger.info(f"  - Podcasts: {len(self._podcasts):,}")
-        logger.info(f"  - Episodes: {len(self._episodes):,}")
-        logger.info(f"  - Speaker turns: {len(speaker_turns):,}")
-        logger.info("✓ Dataset processing completed successfully!")
-        logger.info("Ready to use!")
+        logger.info(f"✓ Dataset processing completed in {total_process_time:.2f} seconds")
+        logger.info(f"Final dataset: {len(self._podcasts):,} podcasts, {len(self._episodes):,} episodes")
 
     def load_podcast_subset(self, **criteria) -> None:
         """
@@ -818,11 +728,7 @@ class SPORCDataset:
         import time
         start_time = time.time()
 
-        logger.info("=" * 80)
-        logger.info("SELECTIVE PODCAST SUBSET LOADING")
-        logger.info("=" * 80)
         logger.info(f"Loading podcast subset with criteria: {criteria}")
-        logger.info("This may take a few minutes as we scan through the entire dataset...")
 
         # Clear existing data
         self._podcasts.clear()
@@ -830,7 +736,7 @@ class SPORCDataset:
         self._selective_mode = True
 
         # Separate episode data from speaker turn data
-        logger.info("Step 1: Scanning dataset to separate episode and speaker turn data...")
+        logger.info("Scanning dataset to separate episode and speaker turn data...")
         scan_start = time.time()
         episode_data = []
         speaker_turns = []
@@ -850,18 +756,15 @@ class SPORCDataset:
 
         scan_time = time.time() - scan_start
         logger.info(f"✓ Dataset scanning completed in {scan_time:.2f} seconds")
-        logger.info(f"  Total records scanned: {record_count:,}")
-        logger.info(f"  Episode records found: {len(episode_data):,}")
-        logger.info(f"  Speaker turn records found: {len(speaker_turns):,}")
+        logger.info(f"  Episode records: {len(episode_data):,}, Speaker turn records: {len(speaker_turns):,}")
 
         # Group episodes by podcast and apply filters
-        logger.info("Step 2: Grouping episodes by podcast and applying filters...")
+        logger.info("Grouping episodes by podcast and applying filters...")
         grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
         podcast_metadata: Dict[str, Dict[str, Any]] = {}
 
         # First pass: collect all episodes and group by podcast
-        logger.info("  First pass: collecting episodes and metadata...")
         for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
 
@@ -899,7 +802,7 @@ class SPORCDataset:
         logger.info(f"  Episodes grouped into {len(podcast_groups)} podcasts")
 
         # Second pass: apply filters
-        logger.info("Step 3: Applying filtering criteria...")
+        logger.info("Applying filtering criteria...")
         filtering_start = time.time()
         filtered_podcasts = {}
         podcasts_checked = 0
@@ -919,12 +822,10 @@ class SPORCDataset:
 
         filtering_time = time.time() - filtering_start
         logger.info(f"✓ Filtering completed in {filtering_time:.2f} seconds")
-        logger.info(f"  Podcasts checked: {podcasts_checked}")
-        logger.info(f"  Podcasts matching criteria: {len(filtered_podcasts)}")
-        logger.info(f"  Filter success rate: {len(filtered_podcasts)/podcasts_checked*100:.1f}%")
+        logger.info(f"  Podcasts matching criteria: {len(filtered_podcasts)} / {podcasts_checked}")
 
         # Third pass: create Podcast and Episode objects for filtered podcasts
-        logger.info("Step 4: Creating Podcast and Episode objects for filtered subset...")
+        logger.info("Creating Podcast and Episode objects for filtered subset...")
         creation_start = time.time()
         created_podcasts = 0
         created_episodes = 0
@@ -962,11 +863,10 @@ class SPORCDataset:
 
         creation_time = time.time() - creation_start
         logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
-        logger.info(f"  Created {created_podcasts} Podcast objects")
-        logger.info(f"  Created {created_episodes} Episode objects")
+        logger.info(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
 
         # Load turns for selected episodes
-        logger.info("Step 5: Loading speaker turn data for selected episodes...")
+        logger.info("Loading speaker turn data for selected episodes...")
         turns_start = time.time()
         self._load_turns_for_episodes(speaker_turns)
         turns_time = time.time() - turns_start
@@ -975,22 +875,8 @@ class SPORCDataset:
         self._loaded = True
         total_time = time.time() - start_time
 
-        logger.info("=" * 80)
-        logger.info("SELECTIVE LOADING COMPLETED")
-        logger.info("=" * 80)
-        logger.info(f"Total time: {total_time:.2f} seconds")
-        logger.info(f"Breakdown:")
-        logger.info(f"  - Dataset scanning: {scan_time:.2f}s ({scan_time/total_time*100:.1f}%)")
-        logger.info(f"  - Episode grouping: {grouping_time:.2f}s ({grouping_time/total_time*100:.1f}%)")
-        logger.info(f"  - Filtering: {filtering_time:.2f}s ({filtering_time/total_time*100:.1f}%)")
-        logger.info(f"  - Object creation: {creation_time:.2f}s ({creation_time/total_time*100:.1f}%)")
-        logger.info(f"  - Turn loading: {turns_time:.2f}s ({turns_time/total_time*100:.1f}%)")
-        logger.info(f"Final subset statistics:")
-        logger.info(f"  - Podcasts loaded: {len(self._podcasts):,}")
-        logger.info(f"  - Episodes loaded: {len(self._episodes):,}")
-        logger.info(f"  - Speaker turns available: {len(speaker_turns):,}")
-        logger.info("✓ Selective loading completed successfully!")
-        logger.info("Ready to use in selective mode!")
+        logger.info(f"✓ Selective loading completed in {total_time:.2f} seconds")
+        logger.info(f"Final subset: {len(self._podcasts):,} podcasts, {len(self._episodes):,} episodes")
 
     def _podcast_matches_criteria(self, podcast_title: str, metadata: Dict[str, Any], criteria: Dict[str, Any]) -> bool:
         """Check if a podcast matches the given criteria."""
@@ -1137,11 +1023,10 @@ class SPORCDataset:
         import time
         turns_start = time.time()
 
-        logger.info("Loading turn data for episodes...")
-        logger.info(f"Processing {len(speaker_turns):,} speaker turn records...")
+        logger.info(f"Loading turn data for {len(speaker_turns):,} speaker turn records...")
 
         # Group turns by episode URL
-        logger.info("Step 4a: Grouping turns by episode URL...")
+        logger.info("Grouping turns by episode URL...")
         grouping_start = time.time()
         turns_by_episode: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -1156,15 +1041,8 @@ class SPORCDataset:
         logger.info(f"✓ Turn grouping completed in {grouping_time:.2f} seconds")
         logger.info(f"  Turns grouped into {len(turns_by_episode):,} episodes")
 
-        # Calculate turn statistics
-        turn_counts = [len(turns) for turns in turns_by_episode.values()]
-        if turn_counts:
-            logger.info(f"  Average turns per episode: {sum(turn_counts) / len(turn_counts):.1f}")
-            logger.info(f"  Min turns per episode: {min(turn_counts)}")
-            logger.info(f"  Max turns per episode: {max(turn_counts)}")
-
         # Load turns for each episode
-        logger.info("Step 4b: Loading turns for each episode...")
+        logger.info("Loading turns for each episode...")
         loading_start = time.time()
         episodes_with_turns = 0
         total_turns_loaded = 0
@@ -1596,11 +1474,7 @@ class SPORCDataset:
 
         import time
         start_time = time.time()
-        logger.info("=" * 60)
-        logger.info("STREAMING EPISODE ITERATION")
-        logger.info("=" * 60)
         logger.info("Iterating over episodes in streaming mode...")
-        logger.info("Data type inconsistencies will be handled gracefully")
 
         episode_count = 0
         skipped_count = 0
@@ -1629,14 +1503,8 @@ class SPORCDataset:
                     continue
 
         total_time = time.time() - start_time
-        logger.info("=" * 60)
-        logger.info("STREAMING ITERATION COMPLETED")
-        logger.info("=" * 60)
-        logger.info(f"Total time: {total_time:.2f} seconds")
-        logger.info(f"Episodes processed: {episode_count:,}")
-        logger.info(f"Episodes skipped: {skipped_count:,}")
-        logger.info(f"Processing rate: {episode_count/total_time:.1f} episodes/second")
-        logger.info("✓ Streaming iteration completed successfully!")
+        logger.info(f"✓ Streaming iteration completed in {total_time:.2f} seconds")
+        logger.info(f"Episodes processed: {episode_count:,}, skipped: {skipped_count:,}")
 
     def iterate_podcasts(self) -> Iterator[Podcast]:
         """Iterate over podcasts without loading them all into memory."""
@@ -1645,11 +1513,7 @@ class SPORCDataset:
 
         import time
         start_time = time.time()
-        logger.info("=" * 60)
-        logger.info("STREAMING PODCAST ITERATION")
-        logger.info("=" * 60)
         logger.info("Iterating over podcasts in streaming mode...")
-        logger.info("Data type inconsistencies will be handled gracefully")
 
         podcast_dict: Dict[str, Podcast] = {}
         episode_count = 0
@@ -1706,15 +1570,8 @@ class SPORCDataset:
             yield podcast
 
         total_time = time.time() - start_time
-        logger.info("=" * 60)
-        logger.info("STREAMING PODCAST ITERATION COMPLETED")
-        logger.info("=" * 60)
-        logger.info(f"Total time: {total_time:.2f} seconds")
-        logger.info(f"Podcasts processed: {podcast_count:,}")
-        logger.info(f"Episodes processed: {episode_count:,}")
-        logger.info(f"Episodes skipped: {skipped_count:,}")
-        logger.info(f"Processing rate: {episode_count/total_time:.1f} episodes/second")
-        logger.info("✓ Streaming podcast iteration completed successfully!")
+        logger.info(f"✓ Streaming podcast iteration completed in {total_time:.2f} seconds")
+        logger.info(f"Podcasts processed: {podcast_count:,}, episodes: {episode_count:,}, skipped: {skipped_count:,}")
 
     def get_dataset_statistics(self) -> Dict[str, Any]:
         """
@@ -1834,6 +1691,8 @@ class SPORCDataset:
                 except Exception as e:
                     logger.debug(f"Skipping record during statistics calculation: {e}")
                     continue
+
+        logger.info(f"✓ Statistics calculated: {len(podcast_titles):,} podcasts, {total_episodes:,} episodes")
 
         return {
             'total_podcasts': len(podcast_titles),
