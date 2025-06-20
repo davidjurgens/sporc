@@ -148,7 +148,24 @@ class Episode:
         """Get the episode date as a datetime object."""
         if self.episode_date_localized is None:
             return None
-        return datetime.fromtimestamp(self.episode_date_localized / 1000)
+
+        try:
+            # Handle case where episode_date_localized might be a string
+            if isinstance(self.episode_date_localized, str):
+                # Try to convert string to int/float
+                try:
+                    timestamp = float(self.episode_date_localized)
+                except (ValueError, TypeError):
+                    # If conversion fails, return None
+                    return None
+            else:
+                timestamp = self.episode_date_localized
+
+            # Convert from milliseconds to seconds and create datetime
+            return datetime.fromtimestamp(timestamp / 1000)
+        except (ValueError, TypeError, OSError):
+            # Handle any other conversion errors
+            return None
 
     @property
     def is_long_form(self) -> bool:

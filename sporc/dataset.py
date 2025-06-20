@@ -75,7 +75,7 @@ class LocalSPORCDataset:
                             all_records.append(record)
 
                             if line_num % 10000 == 0:
-                                logger.info(f"  Loaded {line_num:,} records from {file_type}")
+                                logger.debug(f"  Loaded {line_num:,} records from {file_type}")
 
                         except json.JSONDecodeError as e:
                             logger.warning(f"Skipping invalid JSON on line {line_num} in {file_type}: {e}")
@@ -602,7 +602,7 @@ class SPORCDataset:
         for record in self._dataset:
             record_count += 1
             if record_count % 10000 == 0:
-                logger.info(f"  Processed {record_count:,} records... (episodes: {episode_count}, turns: {turn_count})")
+                logger.debug(f"  Processed {record_count:,} records... (episodes: {episode_count}, turns: {turn_count})")
 
             # Check if this is episode data (has episode-specific fields)
             if 'episodeTitle' in record or 'podTitle' in record:
@@ -658,7 +658,7 @@ class SPORCDataset:
         for podcast_title, episode_dicts in podcast_groups.items():
             created_podcasts += 1
             if created_podcasts % 100 == 0:
-                logger.info(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
+                logger.debug(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
 
             # Create podcast object
             first_episode = episode_dicts[0]
@@ -688,7 +688,7 @@ class SPORCDataset:
 
         creation_time = time.time() - creation_start
         logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
-        logger.info(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
+        logger.debug(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
 
         # Load turns for all episodes
         logger.info("Loading speaker turn data for episodes...")
@@ -762,7 +762,7 @@ class SPORCDataset:
         for record in self._dataset:
             record_count += 1
             if record_count % 10000 == 0:
-                logger.info(f"  Scanned {record_count:,} records... (episodes: {len(episode_data)}, turns: {len(speaker_turns)})")
+                logger.debug(f"  Scanned {record_count:,} records... (episodes: {len(episode_data)}, turns: {len(speaker_turns)})")
 
             # Check if this is episode data (has episode-specific fields)
             if 'episodeTitle' in record or 'podTitle' in record:
@@ -847,7 +847,7 @@ class SPORCDataset:
         for podcast_title, episode_dicts in podcast_groups.items():
             created_podcasts += 1
             if created_podcasts % 10 == 0:
-                logger.info(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
+                logger.debug(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
 
             # Create podcast object
             first_episode = episode_dicts[0]
@@ -877,7 +877,7 @@ class SPORCDataset:
 
         creation_time = time.time() - creation_start
         logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
-        logger.info(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
+        logger.debug(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
 
         # Load turns for selected episodes
         logger.info("Loading speaker turn data for selected episodes...")
@@ -1063,7 +1063,7 @@ class SPORCDataset:
 
         for i, episode in enumerate(self._episodes):
             if i % 1000 == 0:
-                logger.info(f"  Processed {i:,} episodes... ({episodes_with_turns} with turns, {total_turns_loaded} total turns)")
+                logger.debug(f"  Processed {i:,} episodes... ({episodes_with_turns} with turns, {total_turns_loaded} total turns)")
 
             episode_turns = turns_by_episode.get(episode.mp3_url, [])
             if episode_turns:
@@ -1516,7 +1516,7 @@ class SPORCDataset:
                     if episode_count % 100 == 0 or current_time - last_progress_time > 30:
                         elapsed = current_time - start_time
                         rate = episode_count / elapsed if elapsed > 0 else 0
-                        logger.info(f"  Processed {episode_count:,} episodes... (skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
+                        logger.debug(f"  Processed {episode_count:,} episodes... (skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
                         last_progress_time = current_time
 
                     yield episode
@@ -1564,7 +1564,7 @@ class SPORCDataset:
                             if podcast_count % 10 == 0 or current_time - last_progress_time > 30:
                                 elapsed = current_time - start_time
                                 rate = episode_count / elapsed if elapsed > 0 else 0
-                                logger.info(f"  Processed {podcast_count} podcasts... ({episode_count} episodes, skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
+                                logger.debug(f"  Processed {podcast_count} podcasts... ({episode_count} episodes, skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
                                 last_progress_time = current_time
 
                         # Create new podcast
