@@ -621,12 +621,29 @@ class SPORCDataset:
         logger.info("Grouping episodes by podcast...")
         grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
+        current_podcast_title = None
+        current_episodes = []
 
+        # Process episodes in order (they're already grouped by podcast)
         for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
-            if podcast_title not in podcast_groups:
-                podcast_groups[podcast_title] = []
-            podcast_groups[podcast_title].append(episode_dict)
+
+            # Check if we've moved to a new podcast
+            if current_podcast_title is None or podcast_title != current_podcast_title:
+                # Store the previous podcast if it exists
+                if current_podcast_title is not None and current_episodes:
+                    podcast_groups[current_podcast_title] = current_episodes.copy()
+
+                # Start new podcast
+                current_podcast_title = podcast_title
+                current_episodes = []
+
+            # Add episode to current podcast
+            current_episodes.append(episode_dict)
+
+        # Store the last podcast
+        if current_podcast_title is not None and current_episodes:
+            podcast_groups[current_podcast_title] = current_episodes
 
         grouping_time = time.time() - grouping_start
         logger.info(f"✓ Grouping completed in {grouping_time:.2f} seconds")
@@ -758,19 +775,32 @@ class SPORCDataset:
         logger.info(f"✓ Dataset scanning completed in {scan_time:.2f} seconds")
         logger.info(f"  Episode records: {len(episode_data):,}, Speaker turn records: {len(speaker_turns):,}")
 
-        # Group episodes by podcast and apply filters
+        # Group episodes by podcast and apply filters (taking advantage of contiguous nature)
         logger.info("Grouping episodes by podcast and applying filters...")
         grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
         podcast_metadata: Dict[str, Dict[str, Any]] = {}
+        current_podcast_title = None
+        current_episodes = []
+        current_metadata = None
 
-        # First pass: collect all episodes and group by podcast
+        # Process episodes in order (they're already grouped by podcast)
         for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
 
-            if podcast_title not in podcast_groups:
-                podcast_groups[podcast_title] = []
-                podcast_metadata[podcast_title] = {
+            # Check if we've moved to a new podcast
+            if current_podcast_title is None or podcast_title != current_podcast_title:
+                # Process the previous podcast if it exists
+                if current_podcast_title is not None and current_episodes:
+                    # Check if this podcast matches our criteria
+                    if self._podcast_matches_criteria(current_podcast_title, current_metadata, criteria):
+                        podcast_groups[current_podcast_title] = current_episodes.copy()
+                        podcast_metadata[current_podcast_title] = current_metadata.copy()
+
+                # Start new podcast
+                current_podcast_title = podcast_title
+                current_episodes = []
+                current_metadata = {
                     'episodes': [],
                     'categories': set(),
                     'hosts': set(),
@@ -779,58 +809,42 @@ class SPORCDataset:
                     'explicit': bool(episode_dict.get('explicit', 0))
                 }
 
-            podcast_groups[podcast_title].append(episode_dict)
-            podcast_metadata[podcast_title]['episodes'].append(episode_dict)
-            podcast_metadata[podcast_title]['total_duration'] += float(episode_dict.get('durationSeconds', 0))
+            # Add episode to current podcast
+            current_episodes.append(episode_dict)
+            current_metadata['episodes'].append(episode_dict)
+            current_metadata['total_duration'] += float(episode_dict.get('durationSeconds', 0))
 
             # Collect categories
             for i in range(1, 11):
                 category = episode_dict.get(f'category{i}')
                 if category:
-                    podcast_metadata[podcast_title]['categories'].add(category)
+                    current_metadata['categories'].add(category)
 
             # Collect hosts
             host_names = episode_dict.get('hostPredictedNames', [])
             if isinstance(host_names, str):
                 if host_names != "NO_HOST_PREDICTED":
-                    podcast_metadata[podcast_title]['hosts'].add(host_names)
+                    current_metadata['hosts'].add(host_names)
             else:
-                podcast_metadata[podcast_title]['hosts'].update(host_names)
+                current_metadata['hosts'].update(host_names)
+
+        # Process the last podcast
+        if current_podcast_title is not None and current_episodes:
+            if self._podcast_matches_criteria(current_podcast_title, current_metadata, criteria):
+                podcast_groups[current_podcast_title] = current_episodes
+                podcast_metadata[current_podcast_title] = current_metadata
 
         grouping_time = time.time() - grouping_start
         logger.info(f"✓ Episode grouping completed in {grouping_time:.2f} seconds")
-        logger.info(f"  Episodes grouped into {len(podcast_groups)} podcasts")
+        logger.info(f"  Podcasts matching criteria: {len(podcast_groups)}")
 
-        # Second pass: apply filters
-        logger.info("Applying filtering criteria...")
-        filtering_start = time.time()
-        filtered_podcasts = {}
-        podcasts_checked = 0
-
-        for podcast_title, episodes in podcast_groups.items():
-            podcasts_checked += 1
-            if podcasts_checked % 100 == 0:
-                logger.info(f"  Checked {podcasts_checked} podcasts... ({len(filtered_podcasts)} matched criteria)")
-
-            metadata = podcast_metadata[podcast_title]
-
-            # Apply filters
-            if not self._podcast_matches_criteria(podcast_title, metadata, criteria):
-                continue
-
-            filtered_podcasts[podcast_title] = episodes
-
-        filtering_time = time.time() - filtering_start
-        logger.info(f"✓ Filtering completed in {filtering_time:.2f} seconds")
-        logger.info(f"  Podcasts matching criteria: {len(filtered_podcasts)} / {podcasts_checked}")
-
-        # Third pass: create Podcast and Episode objects for filtered podcasts
+        # Create Podcast and Episode objects for filtered podcasts
         logger.info("Creating Podcast and Episode objects for filtered subset...")
         creation_start = time.time()
         created_podcasts = 0
         created_episodes = 0
 
-        for podcast_title, episode_dicts in filtered_podcasts.items():
+        for podcast_title, episode_dicts in podcast_groups.items():
             created_podcasts += 1
             if created_podcasts % 10 == 0:
                 logger.info(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
@@ -1108,6 +1122,7 @@ class SPORCDataset:
         # Search through episode data to find the podcast
         found_episodes = []
         podcast_info = None
+        current_podcast_title = None
 
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
@@ -1115,6 +1130,14 @@ class SPORCDataset:
             if 'episodeTitle' in record or 'podTitle' in record:
                 try:
                     podcast_title = record.get('podTitle', '')
+
+                    # Check if we've moved to a new podcast
+                    if current_podcast_title is None or podcast_title != current_podcast_title:
+                        # If we found the target podcast in the previous batch, we can stop
+                        if current_podcast_title and current_podcast_title.lower() == name.lower():
+                            break
+
+                        current_podcast_title = podcast_title
 
                     # Check for exact match (case-insensitive)
                     if podcast_title.lower() == name.lower():
@@ -1515,8 +1538,10 @@ class SPORCDataset:
         start_time = time.time()
         logger.info("Iterating over podcasts in streaming mode...")
 
-        podcast_dict: Dict[str, Podcast] = {}
+        current_podcast = None
+        current_podcast_title = None
         episode_count = 0
+        podcast_count = 0
         skipped_count = 0
         last_progress_time = time.time()
 
@@ -1527,9 +1552,23 @@ class SPORCDataset:
                 try:
                     podcast_title = record.get('podTitle', 'Unknown Podcast')
 
-                    if podcast_title not in podcast_dict:
+                    # Check if we've moved to a new podcast
+                    if current_podcast_title is None or podcast_title != current_podcast_title:
+                        # Yield the previous podcast if it exists
+                        if current_podcast is not None:
+                            podcast_count += 1
+                            yield current_podcast
+
+                            # Log progress every 10 podcasts or every 30 seconds
+                            current_time = time.time()
+                            if podcast_count % 10 == 0 or current_time - last_progress_time > 30:
+                                elapsed = current_time - start_time
+                                rate = episode_count / elapsed if elapsed > 0 else 0
+                                logger.info(f"  Processed {podcast_count} podcasts... ({episode_count} episodes, skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
+                                last_progress_time = current_time
+
                         # Create new podcast
-                        podcast = Podcast(
+                        current_podcast = Podcast(
                             title=podcast_title,
                             description=record.get('podDescription', ''),
                             rss_url=record.get('rssUrl', ''),
@@ -1543,31 +1582,22 @@ class SPORCDataset:
                             last_update=record.get('lastUpdate'),
                             oldest_episode_date=record.get('oldestEpisodeDate'),
                         )
-                        podcast_dict[podcast_title] = podcast
+                        current_podcast_title = podcast_title
 
-                    # Add episode to podcast
+                    # Add episode to current podcast
                     episode = self._create_episode_from_dict(record)
-                    podcast_dict[podcast_title].add_episode(episode)
+                    current_podcast.add_episode(episode)
                     episode_count += 1
-
-                    # Log progress every 100 episodes or every 30 seconds
-                    current_time = time.time()
-                    if episode_count % 100 == 0 or current_time - last_progress_time > 30:
-                        elapsed = current_time - start_time
-                        rate = episode_count / elapsed if elapsed > 0 else 0
-                        logger.info(f"  Processed {episode_count:,} episodes... ({len(podcast_dict)} podcasts, skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
-                        last_progress_time = current_time
 
                 except Exception as e:
                     skipped_count += 1
                     logger.debug(f"Skipping podcast episode due to processing error: {e}")
                     continue
 
-        # Yield each podcast
-        podcast_count = 0
-        for podcast in podcast_dict.values():
+        # Yield the last podcast
+        if current_podcast is not None:
             podcast_count += 1
-            yield podcast
+            yield current_podcast
 
         total_time = time.time() - start_time
         logger.info(f"✓ Streaming podcast iteration completed in {total_time:.2f} seconds")
@@ -1756,7 +1786,9 @@ class SPORCDataset:
         logger.info(f"Searching for podcasts with subcategory '{subcategory}' in streaming mode...")
 
         podcast_dict: Dict[str, Podcast] = {}
-        podcast_has_subcategory: Dict[str, bool] = {}
+        current_podcast = None
+        current_podcast_title = None
+        current_has_subcategory = False
 
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
@@ -1765,42 +1797,52 @@ class SPORCDataset:
                 try:
                     podcast_title = record.get('podTitle', 'Unknown Podcast')
 
+                    # Check if we've moved to a new podcast
+                    if current_podcast_title is None or podcast_title != current_podcast_title:
+                        # If the previous podcast had the subcategory, keep it
+                        if current_podcast is not None and current_has_subcategory:
+                            podcast_dict[current_podcast_title] = current_podcast
+
+                        # Start new podcast
+                        current_podcast_title = podcast_title
+                        current_has_subcategory = False
+
+                        # Create new podcast
+                        current_podcast = Podcast(
+                            title=podcast_title,
+                            description=record.get('podDescription', ''),
+                            rss_url=record.get('rssUrl', ''),
+                            language=record.get('language', 'en'),
+                            explicit=bool(record.get('explicit', 0)),
+                            image_url=record.get('imageUrl'),
+                            itunes_author=record.get('itunesAuthor'),
+                            itunes_owner_name=record.get('itunesOwnerName'),
+                            host=record.get('host'),
+                            created_on=record.get('createdOn'),
+                            last_update=record.get('lastUpdate'),
+                            oldest_episode_date=record.get('oldestEpisodeDate'),
+                        )
+
                     # Check if this episode has the subcategory
                     has_subcategory = False
                     for i in range(1, 11):
                         category = record.get(f'category{i}')
                         if category == subcategory:
                             has_subcategory = True
+                            current_has_subcategory = True
                             break
 
-                    if has_subcategory:
-                        podcast_has_subcategory[podcast_title] = True
-
-                        if podcast_title not in podcast_dict:
-                            # Create new podcast
-                            podcast = Podcast(
-                                title=podcast_title,
-                                description=record.get('podDescription', ''),
-                                rss_url=record.get('rssUrl', ''),
-                                language=record.get('language', 'en'),
-                                explicit=bool(record.get('explicit', 0)),
-                                image_url=record.get('imageUrl'),
-                                itunes_author=record.get('itunesAuthor'),
-                                itunes_owner_name=record.get('itunesOwnerName'),
-                                host=record.get('host'),
-                                created_on=record.get('createdOn'),
-                                last_update=record.get('lastUpdate'),
-                                oldest_episode_date=record.get('oldestEpisodeDate'),
-                            )
-                            podcast_dict[podcast_title] = podcast
-
-                        # Add episode to podcast
-                        episode = self._create_episode_from_dict(record)
-                        podcast_dict[podcast_title].add_episode(episode)
+                    # Add episode to current podcast
+                    episode = self._create_episode_from_dict(record)
+                    current_podcast.add_episode(episode)
 
                 except Exception as e:
                     logger.debug(f"Skipping record during subcategory search: {e}")
                     continue
+
+        # Check the last podcast
+        if current_podcast is not None and current_has_subcategory:
+            podcast_dict[current_podcast_title] = current_podcast
 
         logger.info(f"Found {len(podcast_dict)} podcasts with subcategory '{subcategory}'")
         return list(podcast_dict.values())
