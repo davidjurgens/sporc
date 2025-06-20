@@ -270,11 +270,11 @@ class SPORCDataset:
 
             if self.streaming:
                 logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
+                self._loaded = True
             else:
-                logger.info("✓ Dataset loaded successfully from local files")
+                logger.info(f"✓ Dataset loaded successfully with {len(self._dataset)} total records")
 
-            # Process the data if not in streaming mode
-            if not self.streaming:
+                # Process the data if not in streaming mode
                 self._process_data()
 
         except Exception as e:
@@ -540,11 +540,11 @@ class SPORCDataset:
 
             if self.streaming:
                 logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
+                self._loaded = True
             else:
                 logger.info(f"✓ Dataset loaded successfully with {len(self._dataset)} total records")
 
-            # Process the data if not in streaming mode
-            if not self.streaming:
+                # Process the data if not in streaming mode
                 self._process_data()
 
         except Exception as e:
@@ -605,7 +605,7 @@ class SPORCDataset:
                 logger.debug(f"  Processed {record_count:,} records... (episodes: {episode_count}, turns: {turn_count})")
 
             # Check if this is episode data (has episode-specific fields)
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 episode_data.append(record)
                 episode_count += 1
             # Check if this is speaker turn data (has turn-specific fields)
@@ -617,6 +617,16 @@ class SPORCDataset:
         logger.info(f"✓ Separation completed in {separation_time:.2f} seconds")
         logger.info(f"  Episode records: {len(episode_data):,}, Speaker turn records: {len(speaker_turns):,}")
 
+        # Deduplicate episodes by mp3url
+        seen_mp3urls = set()
+        deduped_episode_data = []
+        for episode in episode_data:
+            mp3url = episode.get('mp3url')
+            if mp3url and mp3url not in seen_mp3urls:
+                deduped_episode_data.append(episode)
+                seen_mp3urls.add(mp3url)
+        episode_data = deduped_episode_data
+
         # Group episodes by podcast
         logger.info("Grouping episodes by podcast...")
         grouping_start = time.time()
@@ -627,11 +637,14 @@ class SPORCDataset:
         # Process episodes in order (they're already grouped by podcast)
         for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+            ep_title = episode_dict.get('epTitle', 'NO_TITLE')
+            logger.debug(f"Processing episode: {ep_title} (podcast: {podcast_title})")
 
             # Check if we've moved to a new podcast
             if current_podcast_title is None or podcast_title != current_podcast_title:
                 # Store the previous podcast if it exists
                 if current_podcast_title is not None and current_episodes:
+                    logger.debug(f"Storing podcast: {current_podcast_title} with {len(current_episodes)} episodes")
                     podcast_groups[current_podcast_title] = current_episodes.copy()
 
                 # Start new podcast
@@ -643,7 +656,12 @@ class SPORCDataset:
 
         # Store the last podcast
         if current_podcast_title is not None and current_episodes:
+            logger.debug(f"Storing last podcast: {current_podcast_title} with {len(current_episodes)} episodes")
             podcast_groups[current_podcast_title] = current_episodes
+
+        # After grouping, print the number of episodes per podcast
+        for pt, eps in podcast_groups.items():
+            logger.debug(f"Podcast '{pt}' has {len(eps)} episodes: {[e.get('epTitle', 'NO_TITLE') for e in eps]}")
 
         grouping_time = time.time() - grouping_start
         logger.info(f"✓ Grouping completed in {grouping_time:.2f} seconds")
@@ -765,7 +783,7 @@ class SPORCDataset:
                 logger.debug(f"  Scanned {record_count:,} records... (episodes: {len(episode_data)}, turns: {len(speaker_turns)})")
 
             # Check if this is episode data (has episode-specific fields)
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 episode_data.append(record)
             # Check if this is speaker turn data (has turn-specific fields)
             elif 'turnText' in record or 'speaker' in record:
@@ -774,6 +792,16 @@ class SPORCDataset:
         scan_time = time.time() - scan_start
         logger.info(f"✓ Dataset scanning completed in {scan_time:.2f} seconds")
         logger.info(f"  Episode records: {len(episode_data):,}, Speaker turn records: {len(speaker_turns):,}")
+
+        # Deduplicate episodes by mp3url
+        seen_mp3urls = set()
+        deduped_episode_data = []
+        for episode in episode_data:
+            mp3url = episode.get('mp3url')
+            if mp3url and mp3url not in seen_mp3urls:
+                deduped_episode_data.append(episode)
+                seen_mp3urls.add(mp3url)
+        episode_data = deduped_episode_data
 
         # Group episodes by podcast and apply filters (taking advantage of contiguous nature)
         logger.info("Grouping episodes by podcast and applying filters...")
@@ -1076,7 +1104,10 @@ class SPORCDataset:
         total_turns_time = time.time() - turns_start
 
         logger.info(f"✓ Turn loading completed in {loading_time:.2f} seconds")
-        logger.info(f"  Episodes with turns: {episodes_with_turns:,} / {len(self._episodes):,} ({episodes_with_turns/len(self._episodes)*100:.1f}%)")
+        if len(self._episodes) > 0:
+            logger.info(f"  Episodes with turns: {episodes_with_turns:,} / {len(self._episodes):,} ({episodes_with_turns/len(self._episodes)*100:.1f}%)")
+        else:
+            logger.info(f"  Episodes with turns: {episodes_with_turns:,} / {len(self._episodes):,} (no episodes to process)")
         logger.info(f"  Total turns loaded: {total_turns_loaded:,}")
         logger.info(f"  Total turn processing time: {total_turns_time:.2f} seconds")
 
@@ -1127,7 +1158,7 @@ class SPORCDataset:
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
             # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 try:
                     podcast_title = record.get('podTitle', '')
 
@@ -1362,7 +1393,7 @@ class SPORCDataset:
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
             # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 try:
                     episode = self._create_episode_from_dict(record)
 
@@ -1491,43 +1522,25 @@ class SPORCDataset:
         return self._episodes.copy()
 
     def iterate_episodes(self) -> Iterator[Episode]:
-        """Iterate over episodes without loading them all into memory."""
-        if not self.streaming:
-            raise RuntimeError("iterate_episodes() is only available in streaming mode")
-
-        import time
-        start_time = time.time()
-        logger.info("Iterating over episodes in streaming mode...")
-
-        episode_count = 0
-        skipped_count = 0
-        last_progress_time = time.time()
-
-        # Use safe iterator to handle data type inconsistencies
-        for record in self._create_safe_iterator(self._dataset):
-            # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
-                try:
-                    episode = self._create_episode_from_dict(record)
-                    episode_count += 1
-
-                    # Log progress every 100 episodes or every 30 seconds
-                    current_time = time.time()
-                    if episode_count % 100 == 0 or current_time - last_progress_time > 30:
-                        elapsed = current_time - start_time
-                        rate = episode_count / elapsed if elapsed > 0 else 0
-                        logger.debug(f"  Processed {episode_count:,} episodes... (skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
-                        last_progress_time = current_time
-
-                    yield episode
-                except Exception as e:
-                    skipped_count += 1
-                    logger.debug(f"Skipping episode due to processing error: {e}")
-                    continue
-
-        total_time = time.time() - start_time
-        logger.info(f"✓ Streaming iteration completed in {total_time:.2f} seconds")
-        logger.info(f"Episodes processed: {episode_count:,}, skipped: {skipped_count:,}")
+        """
+        Iterate over all episodes in the dataset (streaming or memory mode).
+        """
+        if self.streaming:
+            logger.info("Iterating over episodes in streaming mode...")
+            try:
+                for record in self._create_safe_iterator(self._dataset):
+                    try:
+                        episode = self._create_episode_from_dict(record)
+                        yield episode
+                    except Exception as e:
+                        logger.debug(f"Skipping episode due to processing error: {e}")
+            except Exception as e:
+                logger.error(f"Exception during episode iteration: {e}")
+                raise
+        else:
+            logger.info("Iterating over episodes in memory mode...")
+            for episode in self._episodes:
+                yield episode
 
     def iterate_podcasts(self) -> Iterator[Podcast]:
         """Iterate over podcasts without loading them all into memory."""
@@ -1545,19 +1558,21 @@ class SPORCDataset:
         skipped_count = 0
         last_progress_time = time.time()
 
+        yielded_titles = set()
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
             # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 try:
                     podcast_title = record.get('podTitle', 'Unknown Podcast')
 
                     # Check if we've moved to a new podcast
                     if current_podcast_title is None or podcast_title != current_podcast_title:
-                        # Yield the previous podcast if it exists
-                        if current_podcast is not None:
+                        # Yield the previous podcast if it exists and hasn't been yielded yet
+                        if current_podcast is not None and current_podcast_title not in yielded_titles:
                             podcast_count += 1
                             yield current_podcast
+                            yielded_titles.add(current_podcast_title)
 
                             # Log progress every 10 podcasts or every 30 seconds
                             current_time = time.time()
@@ -1594,10 +1609,11 @@ class SPORCDataset:
                     logger.debug(f"Skipping podcast episode due to processing error: {e}")
                     continue
 
-        # Yield the last podcast
-        if current_podcast is not None:
+        # Yield the last podcast if it hasn't been yielded yet
+        if current_podcast is not None and current_podcast_title not in yielded_titles:
             podcast_count += 1
             yield current_podcast
+            yielded_titles.add(current_podcast_title)
 
         total_time = time.time() - start_time
         logger.info(f"✓ Streaming podcast iteration completed in {total_time:.2f} seconds")
@@ -1685,7 +1701,7 @@ class SPORCDataset:
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
             # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 try:
                     total_episodes += 1
                     duration = float(record.get('durationSeconds', 0))
@@ -1793,7 +1809,7 @@ class SPORCDataset:
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
             # Only process episode records
-            if 'episodeTitle' in record or 'podTitle' in record:
+            if 'epTitle' in record or 'podTitle' in record:
                 try:
                     podcast_title = record.get('podTitle', 'Unknown Podcast')
 
