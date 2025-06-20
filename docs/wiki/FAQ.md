@@ -276,6 +276,53 @@ You can filter for longer turns if needed:
 long_turns = episode.get_turns_by_min_length(10)  # 10+ second turns
 ```
 
+### Q: I get a "JSON parse error: Column changed from string to array" error. What's wrong?
+
+**A:** This error occurs when the Hugging Face dataset contains inconsistent data types for certain fields. The error message shows something like:
+```
+JSON parse error: Column(/neitherPredictedNames) changed from string to array in row 2
+```
+
+**Solution**: This is a data quality issue in the Hugging Face dataset itself. Try these steps:
+
+1. **Clear your cache** (most common solution):
+   ```bash
+   rm -rf ~/.cache/huggingface/
+   ```
+
+2. **Use the cache fix script**:
+   ```bash
+   python fix_dataset_cache.py
+   ```
+
+3. **Try alternative loading methods**:
+   - Use memory mode instead of streaming mode
+   - Use selective loading to load only specific categories
+   - Try loading at a different time (the dataset might be temporarily corrupted)
+
+4. **If the problem persists**:
+   - This indicates a deeper issue with the dataset itself
+   - Contact the dataset maintainers on Hugging Face
+   - Try using an older version of the dataset if available
+
+**Note**: This is not a bug in the SPORC package, but rather a data quality issue in the underlying Hugging Face dataset. The package includes error handling for this situation, but sometimes the dataset itself needs to be fixed by the maintainers.
+
+### Q: I get a "Bad split" error when loading the dataset. What's wrong?
+
+**A:** This error occurs when the dataset structure has changed. The error message shows something like:
+```
+ValueError: Bad split: episodeLevelDataSample. Available splits: ['train']
+```
+
+**Solution**: This has been fixed in the latest version of the SPORC package. The dataset now uses a single 'train' split instead of separate splits for episodes and speaker turns.
+
+If you're still getting this error:
+1. Update to the latest version: `pip install --upgrade sporc`
+2. Clear your cache: `rm -rf ~/.cache/huggingface/`
+3. Try loading the dataset again
+
+If the problem persists, please report it as an issue on GitHub.
+
 ## Troubleshooting
 
 ### Q: I get an "ImportError: No module named 'datasets'". What should I do?
@@ -552,3 +599,49 @@ If you're still having issues, please:
 4. Check the [Installation](Installation.md) guide for setup issues
 
 See the [Contributing](Contributing.md) guide for more details.
+
+### Q: How do I load SPORC from a specific cache directory where it's already been downloaded?
+
+**A:** You can use the `custom_cache_dir` parameter to load SPORC from a pre-existing cache location:
+
+```python
+from sporc import SPORCDataset
+
+# Load from a specific cache directory
+sporc = SPORCDataset(custom_cache_dir='/path/to/your/cache/directory')
+```
+
+**Finding your cache directory:**
+```bash
+python find_sporc_cache.py
+```
+
+This script will:
+- Search for existing Hugging Face cache directories
+- Check if SPORC is already downloaded
+- Provide usage instructions for your specific setup
+
+**Alternative methods:**
+
+1. **Use `cache_dir` parameter:**
+   ```python
+   sporc = SPORCDataset(cache_dir='/path/to/cache')
+   ```
+
+2. **Set environment variable:**
+   ```bash
+   export HF_HOME='/path/to/cache'
+   ```
+   ```python
+   sporc = SPORCDataset()  # Will use HF_HOME
+   ```
+
+**Cache directory differences:**
+- `custom_cache_dir`: Loads from specific directory, downloads there if needed
+- `cache_dir`: Uses as cache location, may download if not found
+- `HF_HOME`: Sets default Hugging Face cache location
+
+**Common cache locations:**
+- Linux/macOS: `~/.cache/huggingface/`
+- macOS: `~/Library/Caches/huggingface/`
+- Windows: `~/AppData/Local/huggingface/`

@@ -7,6 +7,9 @@ import logging
 from typing import List, Dict, Any, Optional, Union, Iterator
 from pathlib import Path
 import warnings
+import os
+import time
+import gzip
 
 try:
     from datasets import load_dataset, Dataset, IterableDataset
@@ -31,6 +34,116 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class LocalSPORCDataset:
+    """
+    A dataset wrapper for local JSONL.gz files that mimics the Hugging Face dataset interface.
+
+    This class provides an iterator interface that reads from local JSONL.gz files
+    and yields records one at a time, supporting both streaming and memory modes.
+    """
+
+    def __init__(self, file_paths: Dict[str, str], streaming: bool = True):
+        """
+        Initialize the local dataset.
+
+        Args:
+            file_paths: Dictionary mapping file type to file path
+            streaming: If True, reads files on-demand. If False, loads all data into memory.
+        """
+        self.file_paths = file_paths
+        self.streaming = streaming
+        self._all_records = None
+
+        if not streaming:
+            self._load_all_records()
+
+    def _load_all_records(self):
+        """Load all records from all files into memory."""
+        logger.info("Loading all records from local files into memory...")
+
+        all_records = []
+        total_files = len(self.file_paths)
+
+        for i, (file_type, file_path) in enumerate(self.file_paths.items()):
+            logger.info(f"Loading {file_type} from {file_path}...")
+
+            try:
+                with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+                    for line_num, line in enumerate(f, 1):
+                        try:
+                            record = json.loads(line.strip())
+                            all_records.append(record)
+
+                            if line_num % 10000 == 0:
+                                logger.info(f"  Loaded {line_num:,} records from {file_type}")
+
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Skipping invalid JSON on line {line_num} in {file_type}: {e}")
+                            continue
+
+            except Exception as e:
+                logger.error(f"Error reading {file_type}: {e}")
+                raise
+
+        self._all_records = all_records
+        logger.info(f"✓ Loaded {len(all_records):,} total records from {total_files} files")
+
+    def __iter__(self):
+        """Iterate over all records from all files."""
+        if self.streaming:
+            return self._stream_records()
+        else:
+            return iter(self._all_records)
+
+    def _stream_records(self):
+        """Stream records from all files."""
+        for file_type, file_path in self.file_paths.items():
+            logger.debug(f"Streaming from {file_type}: {file_path}")
+
+            try:
+                with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+                    for line_num, line in enumerate(f, 1):
+                        try:
+                            record = json.loads(line.strip())
+                            yield record
+
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Skipping invalid JSON on line {line_num} in {file_type}: {e}")
+                            continue
+
+            except Exception as e:
+                logger.error(f"Error reading {file_type}: {e}")
+                raise
+
+    def __len__(self):
+        """Get the total number of records."""
+        if self.streaming:
+            # Count records by reading through files
+            total_count = 0
+            for file_type, file_path in self.file_paths.items():
+                try:
+                    with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+                        for line in f:
+                            if line.strip():  # Skip empty lines
+                                total_count += 1
+                except Exception as e:
+                    logger.error(f"Error counting records in {file_type}: {e}")
+                    raise
+            return total_count
+        else:
+            return len(self._all_records)
+
+    def __getitem__(self, index):
+        """Get a record by index (only available in memory mode)."""
+        if self.streaming:
+            raise RuntimeError("Indexing is not supported in streaming mode")
+
+        if self._all_records is None:
+            raise RuntimeError("Records not loaded into memory")
+
+        return self._all_records[index]
+
+
 class SPORCDataset:
     """
     Main class for working with the SPORC (Structured Podcast Open Research Corpus) dataset.
@@ -42,75 +155,468 @@ class SPORCDataset:
     - **Memory mode** (default): Loads all data into memory for fast access
     - **Streaming mode**: Loads data on-demand to reduce memory usage
     - **Selective mode**: Filters and loads specific podcasts into memory for O(1) operations
+
+    The dataset can be loaded from:
+    - **Hugging Face** (default): Downloads from Hugging Face Hub
+    - **Local files**: Directly from JSONL.gz files in a specified directory
     """
 
     DATASET_ID = "blitt/SPoRC"
-    EPISODE_SPLIT = "episodeLevelDataSample"
-    SPEAKER_TURN_SPLIT = "speakerTurnDataSample"
+    EPISODE_SPLIT = "train"
+    SPEAKER_TURN_SPLIT = "train"
+
+    # Expected local file names
+    LOCAL_FILES = {
+        'episode_data': 'episodeLevelData.jsonl.gz',
+        'episode_data_sample': 'episodeLevelDataSample.jsonl.gz',
+        'speaker_turn_data': 'speakerTurnData.jsonl.gz',
+        'speaker_turn_data_sample': 'speakerTurnDataSample.jsonl.gz'
+    }
 
     def __init__(self, cache_dir: Optional[str] = None, use_auth_token: Optional[str] = None,
-                 streaming: bool = False):
+                 streaming: bool = False, custom_cache_dir: Optional[str] = None,
+                 local_data_dir: Optional[str] = None):
         """
         Initialize the SPORC dataset.
 
         Args:
-            cache_dir: Directory to cache the dataset. If None, uses default cache location.
-            use_auth_token: Hugging Face authentication token. If None, uses default authentication.
-            streaming: If True, use streaming mode to load data on-demand. If False, load all data into memory.
-
-        Raises:
-            AuthenticationError: If Hugging Face authentication fails
-            DatasetAccessError: If the dataset cannot be accessed
+            cache_dir: Directory to cache the dataset. If None, uses Hugging Face default.
+            use_auth_token: Hugging Face token for authentication. If None, uses cached credentials.
+            streaming: If True, uses streaming mode for memory efficiency.
+            custom_cache_dir: Specific directory where the dataset has already been downloaded.
+                             This allows loading from a pre-existing cache location.
+                             If provided, this takes precedence over cache_dir.
+            local_data_dir: Directory containing local JSONL.gz files. If provided, loads from
+                           local files instead of Hugging Face. Expected files:
+                           - episodeLevelData.jsonl.gz
+                           - episodeLevelDataSample.jsonl.gz
+                           - speakerTurnData.jsonl.gz
+                           - speakerTurnDataSample.jsonl.gz
         """
-        self.cache_dir = cache_dir
+        self.cache_dir = custom_cache_dir if custom_cache_dir else cache_dir
         self.use_auth_token = use_auth_token
         self.streaming = streaming
+        self.custom_cache_dir = custom_cache_dir
+        self.local_data_dir = local_data_dir
 
-        # Initialize data storage
-        self._episode_data: Optional[Union[Dataset, IterableDataset]] = None
-        self._speaker_turn_data: Optional[Union[Dataset, IterableDataset]] = None
+        # Data storage
+        self._dataset = None
         self._podcasts: Dict[str, Podcast] = {}
         self._episodes: List[Episode] = []
         self._loaded = False
-        self._selective_mode = False  # Track if we're in selective mode
+        self._selective_mode = False
+        self._local_mode = local_data_dir is not None
 
         # Load the dataset
         self._load_dataset()
 
-    def _load_dataset(self) -> None:
-        """Load the SPORC dataset from Hugging Face."""
-        try:
-            logger.info(f"Loading SPORC dataset from Hugging Face (streaming={self.streaming})...")
+    def _validate_local_files(self) -> Dict[str, str]:
+        """
+        Validate that all required local files exist.
 
-            # Load episode-level data
-            self._episode_data = load_dataset(
+        Returns:
+            Dictionary mapping file type to file path
+
+        Raises:
+            DatasetAccessError: If required files are missing
+        """
+        if not self.local_data_dir:
+            return {}
+
+        data_dir = Path(self.local_data_dir)
+        if not data_dir.exists():
+            raise DatasetAccessError(f"Local data directory does not exist: {self.local_data_dir}")
+
+        if not data_dir.is_dir():
+            raise DatasetAccessError(f"Local data path is not a directory: {self.local_data_dir}")
+
+        file_paths = {}
+        missing_files = []
+
+        for file_type, filename in self.LOCAL_FILES.items():
+            file_path = data_dir / filename
+            if file_path.exists():
+                file_paths[file_type] = str(file_path)
+            else:
+                missing_files.append(filename)
+
+        if missing_files:
+            raise DatasetAccessError(
+                f"Missing required files in {self.local_data_dir}: {', '.join(missing_files)}\n"
+                f"Expected files: {', '.join(self.LOCAL_FILES.values())}"
+            )
+
+        return file_paths
+
+    def _load_local_dataset(self) -> None:
+        """Load dataset from local JSONL.gz files."""
+        start_time = time.time()
+
+        try:
+            logger.info("=" * 80)
+            logger.info("SPORC DATASET LOADING FROM LOCAL FILES")
+            logger.info("=" * 80)
+            logger.info(f"Loading SPORC dataset from local directory: {self.local_data_dir}")
+            logger.info(f"Streaming mode: {self.streaming}")
+            logger.info(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # Validate local files
+            logger.info("Validating local files...")
+            file_paths = self._validate_local_files()
+            logger.info("✓ All required files found")
+
+            # Log file information
+            for file_type, file_path in file_paths.items():
+                try:
+                    file_size = os.path.getsize(file_path) / (1024**3)  # GB
+                    logger.info(f"  {file_type}: {file_path} ({file_size:.2f} GB)")
+                except Exception as e:
+                    logger.debug(f"Could not determine size of {file_path}: {e}")
+
+            # Create a custom dataset object that wraps the local files
+            self._dataset = LocalSPORCDataset(
+                file_paths=file_paths,
+                streaming=self.streaming
+            )
+
+            total_loading_time = time.time() - start_time
+            logger.info("-" * 60)
+            logger.info("LOCAL LOADING SUMMARY")
+            logger.info("-" * 60)
+            logger.info(f"Total loading time: {total_loading_time:.2f} seconds")
+            logger.info("✓ Local dataset loaded successfully")
+
+            if self.streaming:
+                logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
+            else:
+                logger.info("✓ Dataset loaded successfully from local files")
+
+            # Process the data if not in streaming mode
+            if not self.streaming:
+                self._process_data()
+
+        except Exception as e:
+            total_time = time.time() - start_time
+            logger.error("=" * 80)
+            logger.error("LOCAL DATASET LOADING FAILED")
+            logger.error("=" * 80)
+            logger.error(f"Total time before failure: {total_time:.2f} seconds")
+            logger.error(f"Error: {e}")
+            raise DatasetAccessError(f"Failed to load local dataset: {e}") from e
+
+    def _load_dataset_with_flexible_schema(self):
+        """Load dataset with flexible schema to handle data type inconsistencies."""
+        try:
+            from datasets import Features, Value, Sequence
+
+            # Define a flexible schema that can handle mixed data types
+            flexible_features = Features({
+                # Episode fields
+                'epTitle': Value('string'),
+                'epDescription': Value('string'),
+                'mp3url': Value('string'),
+                'durationSeconds': Value('float64'),
+                'transcript': Value('string'),
+                'podTitle': Value('string'),
+                'podDescription': Value('string'),
+                'rssUrl': Value('string'),
+                'category1': Value('string'),
+                'category2': Value('string'),
+                'category3': Value('string'),
+                'category4': Value('string'),
+                'category5': Value('string'),
+                'category6': Value('string'),
+                'category7': Value('string'),
+                'category8': Value('string'),
+                'category9': Value('string'),
+                'category10': Value('string'),
+                # Handle mixed data types for these fields
+                'hostPredictedNames': Value('string'),  # Will be converted to list later
+                'guestPredictedNames': Value('string'),  # Will be converted to list later
+                'neitherPredictedNames': Value('string'),  # Will be converted to list later
+                'mainEpSpeakers': Value('string'),  # Will be converted to list later
+                'hostSpeakerLabels': Value('string'),  # Will be converted to dict later
+                'guestSpeakerLabels': Value('string'),  # Will be converted to dict later
+                'overlapPropDuration': Value('float64'),
+                'overlapPropTurnCount': Value('float64'),
+                'avgTurnDuration': Value('float64'),
+                'totalSpLabels': Value('float64'),
+                'language': Value('string'),
+                'explicit': Value('int64'),
+                'imageUrl': Value('string'),
+                'episodeDateLocalized': Value('string'),
+                'oldestEpisodeDate': Value('string'),
+                'lastUpdate': Value('string'),
+                'createdOn': Value('string'),
+                # Speaker turn fields (for when this is speaker turn data)
+                'turnText': Value('string'),
+                'speaker': Value('string'),
+                'startTime': Value('float64'),
+                'endTime': Value('float64'),
+                'duration': Value('float64'),
+                'wordCount': Value('int64'),
+            })
+
+            logger.info("Loading dataset with flexible schema to handle data type inconsistencies...")
+
+            self._dataset = load_dataset(
                 self.DATASET_ID,
                 split=self.EPISODE_SPLIT,
                 cache_dir=self.cache_dir,
                 use_auth_token=self.use_auth_token,
                 trust_remote_code=True,
-                streaming=self.streaming
+                streaming=self.streaming,
+                features=flexible_features
             )
 
-            # Load speaker turn data
-            self._speaker_turn_data = load_dataset(
-                self.DATASET_ID,
-                split=self.SPEAKER_TURN_SPLIT,
-                cache_dir=self.cache_dir,
-                use_auth_token=self.use_auth_token,
-                trust_remote_code=True,
-                streaming=self.streaming
-            )
-
-            if self.streaming:
-                logger.info("Loaded dataset in streaming mode - data will be loaded on-demand")
-            else:
-                logger.info(f"Loaded {len(self._episode_data)} episodes and {len(self._speaker_turn_data)} speaker turns")
-
-            # Process the data
-            self._process_data()
+            return True
 
         except Exception as e:
+            logger.warning(f"Flexible schema loading failed: {e}")
+            return False
+
+    def _create_safe_iterator(self, dataset_iterator):
+        """Create a safe iterator that handles data type inconsistencies gracefully."""
+        import time
+        start_time = time.time()
+        processed_count = 0
+        cleaned_count = 0
+        skipped_count = 0
+        last_log_time = time.time()
+
+        logger.debug("Starting safe iterator with data type validation...")
+
+        for record in dataset_iterator:
+            processed_count += 1
+
+            # Log progress every 1000 records or every 60 seconds
+            current_time = time.time()
+            if processed_count % 1000 == 0 or current_time - last_log_time > 60:
+                elapsed = current_time - start_time
+                rate = processed_count / elapsed if elapsed > 0 else 0
+                logger.debug(f"Safe iterator: processed {processed_count:,} records (cleaned: {cleaned_count}, skipped: {skipped_count}, rate: {rate:.1f} rec/sec)")
+                last_log_time = current_time
+
+            try:
+                # Validate and clean the record
+                cleaned_record = self._clean_record(record)
+                if cleaned_record is not None:
+                    cleaned_count += 1
+                    yield cleaned_record
+                else:
+                    skipped_count += 1
+            except Exception as e:
+                skipped_count += 1
+                # Log the error but continue processing
+                logger.debug(f"Skipping problematic record: {e}")
+                continue
+
+        total_time = time.time() - start_time
+        logger.debug(f"Safe iterator completed: {processed_count:,} processed, {cleaned_count:,} cleaned, {skipped_count:,} skipped in {total_time:.2f}s")
+
+    def _clean_record(self, record):
+        """Clean and validate a record to handle data type inconsistencies."""
+        try:
+            # Track what fields need cleaning
+            string_fields_cleaned = 0
+            numeric_fields_cleaned = 0
+
+            # Ensure all string fields are actually strings
+            string_fields = [
+                'epTitle', 'epDescription', 'mp3url', 'transcript', 'podTitle',
+                'podDescription', 'rssUrl', 'category1', 'category2', 'category3',
+                'category4', 'category5', 'category6', 'category7', 'category8',
+                'category9', 'category10', 'hostPredictedNames', 'guestPredictedNames',
+                'neitherPredictedNames', 'mainEpSpeakers', 'hostSpeakerLabels',
+                'guestSpeakerLabels', 'language', 'imageUrl', 'episodeDateLocalized',
+                'oldestEpisodeDate', 'lastUpdate', 'createdOn', 'turnText', 'speaker'
+            ]
+
+            for field in string_fields:
+                if field in record and record[field] is not None:
+                    if not isinstance(record[field], str):
+                        record[field] = str(record[field])
+                        string_fields_cleaned += 1
+
+            # Ensure numeric fields are actually numeric
+            numeric_fields = [
+                'durationSeconds', 'overlapPropDuration', 'overlapPropTurnCount',
+                'avgTurnDuration', 'totalSpLabels', 'explicit', 'startTime',
+                'endTime', 'duration', 'wordCount'
+            ]
+
+            for field in numeric_fields:
+                if field in record and record[field] is not None:
+                    try:
+                        record[field] = float(record[field])
+                    except (ValueError, TypeError):
+                        record[field] = 0.0
+                        numeric_fields_cleaned += 1
+
+            # Log if significant cleaning was needed
+            if string_fields_cleaned > 0 or numeric_fields_cleaned > 0:
+                logger.debug(f"Cleaned record: {string_fields_cleaned} string fields, {numeric_fields_cleaned} numeric fields")
+
+            return record
+
+        except Exception as e:
+            logger.debug(f"Failed to clean record: {e}")
+            return None
+
+    def _load_dataset(self) -> None:
+        """Load the SPORC dataset from Hugging Face or local files."""
+        if self._local_mode:
+            self._load_local_dataset()
+        else:
+            self._load_huggingface_dataset()
+
+    def _load_huggingface_dataset(self) -> None:
+        """Load the SPORC dataset from Hugging Face."""
+        start_time = time.time()
+
+        try:
+            logger.info("=" * 80)
+            logger.info("SPORC DATASET LOADING PROCESS")
+            logger.info("=" * 80)
+            logger.info(f"Loading SPORC dataset from Hugging Face (streaming={self.streaming})...")
+            logger.info(f"Dataset ID: {self.DATASET_ID}")
+            logger.info(f"Split: {self.EPISODE_SPLIT}")
+            logger.info(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # Log cache directory information
+            if self.custom_cache_dir:
+                logger.info(f"Using custom cache directory: {self.custom_cache_dir}")
+                logger.info("Attempting to load from pre-existing cache...")
+
+                # Check if the custom cache directory exists
+                if not os.path.exists(self.custom_cache_dir):
+                    logger.warning(f"Custom cache directory does not exist: {self.custom_cache_dir}")
+                    logger.info("Will attempt to download to this location...")
+                else:
+                    logger.info("✓ Custom cache directory found")
+                    # Check cache size
+                    try:
+                        import shutil
+                        cache_size = shutil.disk_usage(self.custom_cache_dir).used / (1024**3)  # GB
+                        logger.info(f"Cache directory size: {cache_size:.2f} GB")
+                    except Exception as e:
+                        logger.debug(f"Could not determine cache size: {e}")
+            else:
+                if self.cache_dir:
+                    logger.info(f"Using specified cache directory: {self.cache_dir}")
+                else:
+                    logger.info("Using default Hugging Face cache directory")
+                    # Show default cache location
+                    try:
+                        from huggingface_hub import constants
+                        default_cache = constants.DEFAULT_CACHE_DIR
+                        logger.info(f"Default cache location: {default_cache}")
+                    except Exception as e:
+                        logger.debug(f"Could not determine default cache location: {e}")
+
+            if not self.custom_cache_dir:
+                logger.info("This may take several minutes on first run as the dataset needs to be downloaded.")
+                logger.info("Dataset size: ~22GB. Subsequent runs will be much faster.")
+
+            # Try multiple loading strategies
+            loading_successful = False
+            strategy_start_time = time.time()
+
+            # Strategy 1: Standard loading
+            logger.info("-" * 60)
+            logger.info("STRATEGY 1: Standard loading")
+            logger.info("-" * 60)
+            logger.info("Connecting to Hugging Face and checking dataset availability...")
+
+            try:
+                strategy_1_start = time.time()
+                self._dataset = load_dataset(
+                    self.DATASET_ID,
+                    split=self.EPISODE_SPLIT,
+                    cache_dir=self.cache_dir,
+                    use_auth_token=self.use_auth_token,
+                    trust_remote_code=True,
+                    streaming=self.streaming
+                )
+                strategy_1_time = time.time() - strategy_1_start
+                loading_successful = True
+                logger.info(f"✓ Dataset loaded successfully with standard method in {strategy_1_time:.2f} seconds")
+
+            except Exception as e:
+                strategy_1_time = time.time() - strategy_1_start
+                logger.warning(f"✗ Standard loading failed after {strategy_1_time:.2f} seconds")
+                if "JSON parse error" in str(e) or "Column changed from" in str(e):
+                    logger.warning("Standard loading failed due to data type inconsistencies.")
+                    logger.info("Trying alternative loading methods...")
+                else:
+                    logger.error(f"Unexpected error in standard loading: {e}")
+                    raise e
+
+            # Strategy 2: Flexible schema loading
+            if not loading_successful:
+                logger.info("-" * 60)
+                logger.info("STRATEGY 2: Flexible schema loading")
+                logger.info("-" * 60)
+                strategy_2_start = time.time()
+                if self._load_dataset_with_flexible_schema():
+                    strategy_2_time = time.time() - strategy_2_start
+                    loading_successful = True
+                    logger.info(f"✓ Dataset loaded successfully with flexible schema in {strategy_2_time:.2f} seconds")
+                else:
+                    strategy_2_time = time.time() - strategy_2_start
+                    logger.warning(f"✗ Flexible schema loading failed after {strategy_2_time:.2f} seconds")
+
+            # Strategy 3: Alternative configuration
+            if not loading_successful:
+                logger.info("-" * 60)
+                logger.info("STRATEGY 3: Alternative configuration")
+                logger.info("-" * 60)
+                logger.info("Trying alternative configuration...")
+                try:
+                    strategy_3_start = time.time()
+                    self._dataset = load_dataset(
+                        self.DATASET_ID,
+                        split=self.EPISODE_SPLIT,
+                        cache_dir=self.cache_dir,
+                        use_auth_token=self.use_auth_token,
+                        trust_remote_code=True,
+                        streaming=self.streaming,
+                        keep_in_memory=False
+                    )
+                    strategy_3_time = time.time() - strategy_3_start
+                    loading_successful = True
+                    logger.info(f"✓ Dataset loaded successfully with alternative configuration in {strategy_3_time:.2f} seconds")
+                except Exception as e:
+                    strategy_3_time = time.time() - strategy_3_start
+                    logger.error(f"✗ All loading strategies failed after {strategy_3_time:.2f} seconds")
+                    logger.error(f"Final error: {e}")
+                    raise e
+
+            total_loading_time = time.time() - strategy_start_time
+            logger.info("-" * 60)
+            logger.info("LOADING SUMMARY")
+            logger.info("-" * 60)
+            logger.info(f"Total loading time: {total_loading_time:.2f} seconds")
+            logger.info(f"Loading successful: {'✓ YES' if loading_successful else '✗ NO'}")
+
+            if self.streaming:
+                logger.info("✓ Dataset loaded in streaming mode - data will be loaded on-demand")
+            else:
+                logger.info(f"✓ Dataset loaded successfully with {len(self._dataset)} total records")
+
+            # Process the data if not in streaming mode
+            if not self.streaming:
+                self._process_data()
+
+        except Exception as e:
+            total_time = time.time() - start_time
+            logger.error("=" * 80)
+            logger.error("DATASET LOADING FAILED")
+            logger.error("=" * 80)
+            logger.error(f"Total time before failure: {total_time:.2f} seconds")
+            logger.error(f"Error: {e}")
+
+            # Handle authentication and other errors
             if "401" in str(e) or "authentication" in str(e).lower():
                 raise AuthenticationError(
                     "Authentication failed. Please ensure you have accepted the dataset terms "
@@ -121,32 +627,98 @@ class SPORCDataset:
                 raise DatasetAccessError(
                     f"Dataset not found. Please check that the dataset ID '{self.DATASET_ID}' is correct."
                 ) from e
+            elif "JSON parse error" in str(e) or "Column changed from" in str(e):
+                raise DatasetAccessError(
+                    f"Failed to load dataset due to data quality issues. "
+                    f"The Hugging Face dataset contains inconsistent data types that cannot be parsed. "
+                    f"Error: {e}. "
+                    f"This is a known issue with the dataset itself. "
+                    f"Please try: "
+                    f"1. Clearing your cache: rm -rf ~/.cache/huggingface/ "
+                    f"2. Using memory mode instead of streaming mode "
+                    f"3. Contacting the dataset maintainers about the data quality issues."
+                ) from e
             else:
                 raise DatasetAccessError(f"Failed to load dataset: {e}") from e
 
     def _process_data(self) -> None:
         """Process the loaded dataset into Podcast and Episode objects."""
+        import time
+        process_start_time = time.time()
+
         if self.streaming:
             logger.info("Dataset loaded in streaming mode - no data processed yet")
+            logger.info("Data will be processed on-demand as you access it")
             self._loaded = True
             return
 
-        logger.info("Processing dataset...")
+        logger.info("Processing dataset into Podcast and Episode objects...")
+        logger.info("This may take a few minutes for the first time...")
 
-        # Convert speaker turn data to list for easier processing
-        speaker_turns = list(self._speaker_turn_data)
+        # Separate episode data from speaker turn data
+        logger.info("Step 1: Separating episode data from speaker turn data...")
+        separation_start = time.time()
+        episode_data = []
+        speaker_turns = []
+
+        logger.info("Scanning through dataset records...")
+        record_count = 0
+        episode_count = 0
+        turn_count = 0
+
+        for record in self._dataset:
+            record_count += 1
+            if record_count % 10000 == 0:
+                logger.info(f"  Processed {record_count:,} records... (episodes: {episode_count}, turns: {turn_count})")
+
+            # Check if this is episode data (has episode-specific fields)
+            if 'episodeTitle' in record or 'podTitle' in record:
+                episode_data.append(record)
+                episode_count += 1
+            # Check if this is speaker turn data (has turn-specific fields)
+            elif 'turnText' in record or 'speaker' in record:
+                speaker_turns.append(record)
+                turn_count += 1
+
+        separation_time = time.time() - separation_start
+        logger.info(f"✓ Separation completed in {separation_time:.2f} seconds")
+        logger.info(f"  Total records processed: {record_count:,}")
+        logger.info(f"  Episode records found: {len(episode_data):,}")
+        logger.info(f"  Speaker turn records found: {len(speaker_turns):,}")
 
         # Group episodes by podcast
+        logger.info("Step 2: Grouping episodes by podcast...")
+        grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
 
-        for episode_dict in self._episode_data:
+        for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
             if podcast_title not in podcast_groups:
                 podcast_groups[podcast_title] = []
             podcast_groups[podcast_title].append(episode_dict)
 
+        grouping_time = time.time() - grouping_start
+        logger.info(f"✓ Grouping completed in {grouping_time:.2f} seconds")
+        logger.info(f"  Episodes grouped into {len(podcast_groups)} podcasts")
+
+        # Calculate podcast statistics
+        episode_counts = [len(episodes) for episodes in podcast_groups.values()]
+        if episode_counts:
+            logger.info(f"  Average episodes per podcast: {sum(episode_counts) / len(episode_counts):.1f}")
+            logger.info(f"  Min episodes per podcast: {min(episode_counts)}")
+            logger.info(f"  Max episodes per podcast: {max(episode_counts)}")
+
         # Create Podcast and Episode objects
+        logger.info("Step 3: Creating Podcast and Episode objects...")
+        creation_start = time.time()
+        created_podcasts = 0
+        created_episodes = 0
+
         for podcast_title, episode_dicts in podcast_groups.items():
+            created_podcasts += 1
+            if created_podcasts % 100 == 0:
+                logger.info(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
+
             # Create podcast object
             first_episode = episode_dicts[0]
             podcast = Podcast(
@@ -169,14 +741,40 @@ class SPORCDataset:
                 episode = self._create_episode_from_dict(episode_dict)
                 podcast.add_episode(episode)
                 self._episodes.append(episode)
+                created_episodes += 1
 
             self._podcasts[podcast_title] = podcast
 
+        creation_time = time.time() - creation_start
+        logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
+        logger.info(f"  Created {created_podcasts} Podcast objects")
+        logger.info(f"  Created {created_episodes} Episode objects")
+
         # Load turns for all episodes
+        logger.info("Step 4: Loading speaker turn data for episodes...")
+        turns_start = time.time()
         self._load_turns_for_episodes(speaker_turns)
+        turns_time = time.time() - turns_start
+        logger.info(f"✓ Speaker turn loading completed in {turns_time:.2f} seconds")
 
         self._loaded = True
-        logger.info(f"Processed {len(self._podcasts)} podcasts with {len(self._episodes)} total episodes")
+        total_process_time = time.time() - process_start_time
+
+        logger.info("=" * 60)
+        logger.info("DATA PROCESSING COMPLETED")
+        logger.info("=" * 60)
+        logger.info(f"Total processing time: {total_process_time:.2f} seconds")
+        logger.info(f"Breakdown:")
+        logger.info(f"  - Separation: {separation_time:.2f}s ({separation_time/total_process_time*100:.1f}%)")
+        logger.info(f"  - Grouping: {grouping_time:.2f}s ({grouping_time/total_process_time*100:.1f}%)")
+        logger.info(f"  - Object creation: {creation_time:.2f}s ({creation_time/total_process_time*100:.1f}%)")
+        logger.info(f"  - Turn loading: {turns_time:.2f}s ({turns_time/total_process_time*100:.1f}%)")
+        logger.info(f"Final dataset statistics:")
+        logger.info(f"  - Podcasts: {len(self._podcasts):,}")
+        logger.info(f"  - Episodes: {len(self._episodes):,}")
+        logger.info(f"  - Speaker turns: {len(speaker_turns):,}")
+        logger.info("✓ Dataset processing completed successfully!")
+        logger.info("Ready to use!")
 
     def load_podcast_subset(self, **criteria) -> None:
         """
@@ -217,22 +815,54 @@ class SPORCDataset:
                           "In memory mode, all data is already loaded.")
             return
 
+        import time
+        start_time = time.time()
+
+        logger.info("=" * 80)
+        logger.info("SELECTIVE PODCAST SUBSET LOADING")
+        logger.info("=" * 80)
         logger.info(f"Loading podcast subset with criteria: {criteria}")
+        logger.info("This may take a few minutes as we scan through the entire dataset...")
 
         # Clear existing data
         self._podcasts.clear()
         self._episodes.clear()
         self._selective_mode = True
 
-        # Convert speaker turn data to list for easier processing
-        speaker_turns = list(self._speaker_turn_data)
+        # Separate episode data from speaker turn data
+        logger.info("Step 1: Scanning dataset to separate episode and speaker turn data...")
+        scan_start = time.time()
+        episode_data = []
+        speaker_turns = []
+        record_count = 0
+
+        for record in self._dataset:
+            record_count += 1
+            if record_count % 10000 == 0:
+                logger.info(f"  Scanned {record_count:,} records... (episodes: {len(episode_data)}, turns: {len(speaker_turns)})")
+
+            # Check if this is episode data (has episode-specific fields)
+            if 'episodeTitle' in record or 'podTitle' in record:
+                episode_data.append(record)
+            # Check if this is speaker turn data (has turn-specific fields)
+            elif 'turnText' in record or 'speaker' in record:
+                speaker_turns.append(record)
+
+        scan_time = time.time() - scan_start
+        logger.info(f"✓ Dataset scanning completed in {scan_time:.2f} seconds")
+        logger.info(f"  Total records scanned: {record_count:,}")
+        logger.info(f"  Episode records found: {len(episode_data):,}")
+        logger.info(f"  Speaker turn records found: {len(speaker_turns):,}")
 
         # Group episodes by podcast and apply filters
+        logger.info("Step 2: Grouping episodes by podcast and applying filters...")
+        grouping_start = time.time()
         podcast_groups: Dict[str, List[Dict[str, Any]]] = {}
         podcast_metadata: Dict[str, Dict[str, Any]] = {}
 
         # First pass: collect all episodes and group by podcast
-        for episode_dict in self._episode_data:
+        logger.info("  First pass: collecting episodes and metadata...")
+        for episode_dict in episode_data:
             podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
 
             if podcast_title not in podcast_groups:
@@ -264,9 +894,21 @@ class SPORCDataset:
             else:
                 podcast_metadata[podcast_title]['hosts'].update(host_names)
 
+        grouping_time = time.time() - grouping_start
+        logger.info(f"✓ Episode grouping completed in {grouping_time:.2f} seconds")
+        logger.info(f"  Episodes grouped into {len(podcast_groups)} podcasts")
+
         # Second pass: apply filters
+        logger.info("Step 3: Applying filtering criteria...")
+        filtering_start = time.time()
         filtered_podcasts = {}
+        podcasts_checked = 0
+
         for podcast_title, episodes in podcast_groups.items():
+            podcasts_checked += 1
+            if podcasts_checked % 100 == 0:
+                logger.info(f"  Checked {podcasts_checked} podcasts... ({len(filtered_podcasts)} matched criteria)")
+
             metadata = podcast_metadata[podcast_title]
 
             # Apply filters
@@ -275,8 +917,23 @@ class SPORCDataset:
 
             filtered_podcasts[podcast_title] = episodes
 
+        filtering_time = time.time() - filtering_start
+        logger.info(f"✓ Filtering completed in {filtering_time:.2f} seconds")
+        logger.info(f"  Podcasts checked: {podcasts_checked}")
+        logger.info(f"  Podcasts matching criteria: {len(filtered_podcasts)}")
+        logger.info(f"  Filter success rate: {len(filtered_podcasts)/podcasts_checked*100:.1f}%")
+
         # Third pass: create Podcast and Episode objects for filtered podcasts
+        logger.info("Step 4: Creating Podcast and Episode objects for filtered subset...")
+        creation_start = time.time()
+        created_podcasts = 0
+        created_episodes = 0
+
         for podcast_title, episode_dicts in filtered_podcasts.items():
+            created_podcasts += 1
+            if created_podcasts % 10 == 0:
+                logger.info(f"  Created {created_podcasts} podcasts... ({created_episodes} episodes)")
+
             # Create podcast object
             first_episode = episode_dicts[0]
             podcast = Podcast(
@@ -299,14 +956,41 @@ class SPORCDataset:
                 episode = self._create_episode_from_dict(episode_dict)
                 podcast.add_episode(episode)
                 self._episodes.append(episode)
+                created_episodes += 1
 
             self._podcasts[podcast_title] = podcast
 
+        creation_time = time.time() - creation_start
+        logger.info(f"✓ Object creation completed in {creation_time:.2f} seconds")
+        logger.info(f"  Created {created_podcasts} Podcast objects")
+        logger.info(f"  Created {created_episodes} Episode objects")
+
         # Load turns for selected episodes
+        logger.info("Step 5: Loading speaker turn data for selected episodes...")
+        turns_start = time.time()
         self._load_turns_for_episodes(speaker_turns)
+        turns_time = time.time() - turns_start
+        logger.info(f"✓ Speaker turn loading completed in {turns_time:.2f} seconds")
 
         self._loaded = True
-        logger.info(f"Loaded {len(self._podcasts)} podcasts with {len(self._episodes)} total episodes in selective mode")
+        total_time = time.time() - start_time
+
+        logger.info("=" * 80)
+        logger.info("SELECTIVE LOADING COMPLETED")
+        logger.info("=" * 80)
+        logger.info(f"Total time: {total_time:.2f} seconds")
+        logger.info(f"Breakdown:")
+        logger.info(f"  - Dataset scanning: {scan_time:.2f}s ({scan_time/total_time*100:.1f}%)")
+        logger.info(f"  - Episode grouping: {grouping_time:.2f}s ({grouping_time/total_time*100:.1f}%)")
+        logger.info(f"  - Filtering: {filtering_time:.2f}s ({filtering_time/total_time*100:.1f}%)")
+        logger.info(f"  - Object creation: {creation_time:.2f}s ({creation_time/total_time*100:.1f}%)")
+        logger.info(f"  - Turn loading: {turns_time:.2f}s ({turns_time/total_time*100:.1f}%)")
+        logger.info(f"Final subset statistics:")
+        logger.info(f"  - Podcasts loaded: {len(self._podcasts):,}")
+        logger.info(f"  - Episodes loaded: {len(self._episodes):,}")
+        logger.info(f"  - Speaker turns available: {len(speaker_turns):,}")
+        logger.info("✓ Selective loading completed successfully!")
+        logger.info("Ready to use in selective mode!")
 
     def _podcast_matches_criteria(self, podcast_title: str, metadata: Dict[str, Any], criteria: Dict[str, Any]) -> bool:
         """Check if a podcast matches the given criteria."""
@@ -450,10 +1134,17 @@ class SPORCDataset:
 
     def _load_turns_for_episodes(self, speaker_turns: List[Dict[str, Any]]) -> None:
         """Load turn data for all episodes."""
+        import time
+        turns_start = time.time()
+
         logger.info("Loading turn data for episodes...")
+        logger.info(f"Processing {len(speaker_turns):,} speaker turn records...")
 
         # Group turns by episode URL
+        logger.info("Step 4a: Grouping turns by episode URL...")
+        grouping_start = time.time()
         turns_by_episode: Dict[str, List[Dict[str, Any]]] = {}
+
         for turn in speaker_turns:
             mp3_url = turn.get('mp3url')
             if mp3_url:
@@ -461,12 +1152,41 @@ class SPORCDataset:
                     turns_by_episode[mp3_url] = []
                 turns_by_episode[mp3_url].append(turn)
 
+        grouping_time = time.time() - grouping_start
+        logger.info(f"✓ Turn grouping completed in {grouping_time:.2f} seconds")
+        logger.info(f"  Turns grouped into {len(turns_by_episode):,} episodes")
+
+        # Calculate turn statistics
+        turn_counts = [len(turns) for turns in turns_by_episode.values()]
+        if turn_counts:
+            logger.info(f"  Average turns per episode: {sum(turn_counts) / len(turn_counts):.1f}")
+            logger.info(f"  Min turns per episode: {min(turn_counts)}")
+            logger.info(f"  Max turns per episode: {max(turn_counts)}")
+
         # Load turns for each episode
-        for episode in self._episodes:
+        logger.info("Step 4b: Loading turns for each episode...")
+        loading_start = time.time()
+        episodes_with_turns = 0
+        total_turns_loaded = 0
+
+        for i, episode in enumerate(self._episodes):
+            if i % 1000 == 0:
+                logger.info(f"  Processed {i:,} episodes... ({episodes_with_turns} with turns, {total_turns_loaded} total turns)")
+
             episode_turns = turns_by_episode.get(episode.mp3_url, [])
+            if episode_turns:
+                episodes_with_turns += 1
+                total_turns_loaded += len(episode_turns)
+
             episode.load_turns(episode_turns)
 
-        logger.info(f"Loaded turns for {len(self._episodes)} episodes")
+        loading_time = time.time() - loading_start
+        total_turns_time = time.time() - turns_start
+
+        logger.info(f"✓ Turn loading completed in {loading_time:.2f} seconds")
+        logger.info(f"  Episodes with turns: {episodes_with_turns:,} / {len(self._episodes):,} ({episodes_with_turns/len(self._episodes)*100:.1f}%)")
+        logger.info(f"  Total turns loaded: {total_turns_loaded:,}")
+        logger.info(f"  Total turn processing time: {total_turns_time:.2f} seconds")
 
     def search_podcast(self, name: str) -> Podcast:
         """
@@ -507,47 +1227,86 @@ class SPORCDataset:
         """Search for a podcast in streaming mode."""
         logger.info(f"Searching for podcast '{name}' in streaming mode...")
 
-        # Search through episodes to find the podcast
-        for episode_dict in self._episode_data:
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+        # Search through episode data to find the podcast
+        found_episodes = []
+        podcast_info = None
 
-            # Check if this episode belongs to the requested podcast
-            if (name.lower() == podcast_title.lower() or
-                name.lower() in podcast_title.lower()):
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    podcast_title = record.get('podTitle', '')
 
-                # Create podcast object
-                podcast = Podcast(
-                    title=podcast_title,
-                    description=episode_dict.get('podDescription', ''),
-                    rss_url=episode_dict.get('rssUrl', ''),
-                    language=episode_dict.get('language', 'en'),
-                    explicit=bool(episode_dict.get('explicit', 0)),
-                    image_url=episode_dict.get('imageUrl'),
-                    itunes_author=episode_dict.get('itunesAuthor'),
-                    itunes_owner_name=episode_dict.get('itunesOwnerName'),
-                    host=episode_dict.get('host'),
-                    created_on=episode_dict.get('createdOn'),
-                    last_update=episode_dict.get('lastUpdate'),
-                    oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
-                )
+                    # Check for exact match (case-insensitive)
+                    if podcast_title.lower() == name.lower():
+                        found_episodes.append(record)
+                        if podcast_info is None:
+                            podcast_info = {
+                                'title': podcast_title,
+                                'description': record.get('podDescription', ''),
+                                'rss_url': record.get('rssUrl', ''),
+                                'language': record.get('language', 'en'),
+                                'explicit': bool(record.get('explicit', 0)),
+                                'image_url': record.get('imageUrl'),
+                                'itunes_author': record.get('itunesAuthor'),
+                                'itunes_owner_name': record.get('itunesOwnerName'),
+                                'host': record.get('host'),
+                                'created_on': record.get('createdOn'),
+                                'last_update': record.get('lastUpdate'),
+                                'oldest_episode_date': record.get('oldestEpisodeDate'),
+                            }
+                except Exception as e:
+                    logger.debug(f"Skipping record during podcast search: {e}")
+                    continue
 
-                # Add this episode
+        if not found_episodes:
+            raise NotFoundError(f"Podcast '{name}' not found")
+
+        if len(found_episodes) == 0:
+            raise NotFoundError(f"Podcast '{name}' not found")
+
+        # Create podcast object
+        podcast = Podcast(
+            title=podcast_info['title'],
+            description=podcast_info['description'],
+            rss_url=podcast_info['rss_url'],
+            language=podcast_info['language'],
+            explicit=podcast_info['explicit'],
+            image_url=podcast_info['image_url'],
+            itunes_author=podcast_info['itunes_author'],
+            itunes_owner_name=podcast_info['itunes_owner_name'],
+            host=podcast_info['host'],
+            created_on=podcast_info['created_on'],
+            last_update=podcast_info['last_update'],
+            oldest_episode_date=podcast_info['oldest_episode_date'],
+        )
+
+        # Create episode objects
+        for episode_dict in found_episodes:
+            try:
                 episode = self._create_episode_from_dict(episode_dict)
                 podcast.add_episode(episode)
+            except Exception as e:
+                logger.debug(f"Skipping episode during podcast creation: {e}")
+                continue
 
-                # Load turns for this episode
-                self._load_turns_for_episode_streaming(episode)
-
-                return podcast
-
-        raise NotFoundError(f"Podcast '{name}' not found")
+        logger.info(f"Found podcast '{name}' with {len(found_episodes)} episodes")
+        return podcast
 
     def _load_turns_for_episode_streaming(self, episode: Episode) -> None:
         """Load turn data for a single episode in streaming mode."""
+        if episode._turns_loaded:
+            return
+
         turns_data = []
-        for turn_dict in self._speaker_turn_data:
-            if turn_dict.get('mp3url') == episode.mp3_url:
-                turns_data.append(turn_dict)
+
+        # Search through speaker turn data to find turns for this episode
+        for record in self._dataset:
+            # Only process speaker turn records
+            if 'turnText' in record or 'speaker' in record:
+                if record.get('mp3url') == episode.mp3_url:
+                    turns_data.append(record)
 
         episode.load_turns(turns_data)
 
@@ -695,21 +1454,25 @@ class SPORCDataset:
 
     def _search_episodes_streaming(self, **criteria) -> List[Episode]:
         """Search for episodes in streaming mode."""
-        logger.info(f"Searching for episodes with criteria {criteria} in streaming mode...")
+        logger.info(f"Searching for episodes with criteria: {criteria}")
 
-        episodes = []
+        matching_episodes = []
 
-        for episode_dict in self._episode_data:
-            # Create episode object
-            episode = self._create_episode_from_dict(episode_dict)
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    episode = self._create_episode_from_dict(record)
 
-            # Apply filters
-            if self._episode_matches_criteria(episode, criteria):
-                # Load turns for this episode
-                self._load_turns_for_episode_streaming(episode)
-                episodes.append(episode)
+                    if self._episode_matches_criteria(episode, criteria):
+                        matching_episodes.append(episode)
+                except Exception as e:
+                    logger.debug(f"Skipping episode during search: {e}")
+                    continue
 
-        return episodes
+        logger.info(f"Found {len(matching_episodes)} matching episodes")
+        return matching_episodes
 
     def _episode_matches_criteria(self, episode: Episode, criteria: Dict[str, Any]) -> bool:
         """Check if an episode matches the given criteria."""
@@ -791,39 +1554,14 @@ class SPORCDataset:
 
     def _get_all_podcasts_streaming(self) -> List[Podcast]:
         """Get all podcasts in streaming mode."""
-        logger.info("Getting all podcasts in streaming mode...")
+        if not self._selective_mode:
+            raise RuntimeError(
+                "get_all_podcasts() is not available in streaming mode unless "
+                "a subset has been loaded with load_podcast_subset(). "
+                "Use iterate_podcasts() instead."
+            )
 
-        podcast_dict: Dict[str, Podcast] = {}
-
-        for episode_dict in self._episode_data:
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
-
-            if podcast_title not in podcast_dict:
-                # Create new podcast
-                podcast = Podcast(
-                    title=podcast_title,
-                    description=episode_dict.get('podDescription', ''),
-                    rss_url=episode_dict.get('rssUrl', ''),
-                    language=episode_dict.get('language', 'en'),
-                    explicit=bool(episode_dict.get('explicit', 0)),
-                    image_url=episode_dict.get('imageUrl'),
-                    itunes_author=episode_dict.get('itunesAuthor'),
-                    itunes_owner_name=episode_dict.get('itunesOwnerName'),
-                    host=episode_dict.get('host'),
-                    created_on=episode_dict.get('createdOn'),
-                    last_update=episode_dict.get('lastUpdate'),
-                    oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
-                )
-                podcast_dict[podcast_title] = podcast
-
-            # Add episode to podcast
-            episode = self._create_episode_from_dict(episode_dict)
-            podcast_dict[podcast_title].add_episode(episode)
-
-            # Load turns for this episode
-            self._load_turns_for_episode_streaming(episode)
-
-        return list(podcast_dict.values())
+        return list(self._podcasts.values())
 
     def get_all_episodes(self) -> List[Episode]:
         """
@@ -842,86 +1580,141 @@ class SPORCDataset:
 
     def _get_all_episodes_streaming(self) -> List[Episode]:
         """Get all episodes in streaming mode."""
-        logger.info("Getting all episodes in streaming mode...")
+        if not self._selective_mode:
+            raise RuntimeError(
+                "get_all_episodes() is not available in streaming mode unless "
+                "a subset has been loaded with load_podcast_subset(). "
+                "Use iterate_episodes() instead."
+            )
 
-        episodes = []
-
-        for episode_dict in self._episode_data:
-            episode = self._create_episode_from_dict(episode_dict)
-            self._load_turns_for_episode_streaming(episode)
-            episodes.append(episode)
-
-        return episodes
+        return self._episodes.copy()
 
     def iterate_episodes(self) -> Iterator[Episode]:
-        """
-        Iterate over episodes one at a time (streaming mode only).
-
-        This method is only available in streaming mode and allows you to
-        process episodes one at a time without loading all episodes into memory.
-
-        Returns:
-            Iterator over Episode objects
-
-        Raises:
-            RuntimeError: If not in streaming mode
-        """
+        """Iterate over episodes without loading them all into memory."""
         if not self.streaming:
             raise RuntimeError("iterate_episodes() is only available in streaming mode")
 
-        for episode_dict in self._episode_data:
-            episode = self._create_episode_from_dict(episode_dict)
-            self._load_turns_for_episode_streaming(episode)
-            yield episode
+        import time
+        start_time = time.time()
+        logger.info("=" * 60)
+        logger.info("STREAMING EPISODE ITERATION")
+        logger.info("=" * 60)
+        logger.info("Iterating over episodes in streaming mode...")
+        logger.info("Data type inconsistencies will be handled gracefully")
+
+        episode_count = 0
+        skipped_count = 0
+        last_progress_time = time.time()
+
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    episode = self._create_episode_from_dict(record)
+                    episode_count += 1
+
+                    # Log progress every 100 episodes or every 30 seconds
+                    current_time = time.time()
+                    if episode_count % 100 == 0 or current_time - last_progress_time > 30:
+                        elapsed = current_time - start_time
+                        rate = episode_count / elapsed if elapsed > 0 else 0
+                        logger.info(f"  Processed {episode_count:,} episodes... (skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
+                        last_progress_time = current_time
+
+                    yield episode
+                except Exception as e:
+                    skipped_count += 1
+                    logger.debug(f"Skipping episode due to processing error: {e}")
+                    continue
+
+        total_time = time.time() - start_time
+        logger.info("=" * 60)
+        logger.info("STREAMING ITERATION COMPLETED")
+        logger.info("=" * 60)
+        logger.info(f"Total time: {total_time:.2f} seconds")
+        logger.info(f"Episodes processed: {episode_count:,}")
+        logger.info(f"Episodes skipped: {skipped_count:,}")
+        logger.info(f"Processing rate: {episode_count/total_time:.1f} episodes/second")
+        logger.info("✓ Streaming iteration completed successfully!")
 
     def iterate_podcasts(self) -> Iterator[Podcast]:
-        """
-        Iterate over podcasts one at a time (streaming mode only).
-
-        This method is only available in streaming mode and allows you to
-        process podcasts one at a time without loading all podcasts into memory.
-
-        Returns:
-            Iterator over Podcast objects
-
-        Raises:
-            RuntimeError: If not in streaming mode
-        """
+        """Iterate over podcasts without loading them all into memory."""
         if not self.streaming:
             raise RuntimeError("iterate_podcasts() is only available in streaming mode")
 
+        import time
+        start_time = time.time()
+        logger.info("=" * 60)
+        logger.info("STREAMING PODCAST ITERATION")
+        logger.info("=" * 60)
+        logger.info("Iterating over podcasts in streaming mode...")
+        logger.info("Data type inconsistencies will be handled gracefully")
+
         podcast_dict: Dict[str, Podcast] = {}
+        episode_count = 0
+        skipped_count = 0
+        last_progress_time = time.time()
 
-        for episode_dict in self._episode_data:
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    podcast_title = record.get('podTitle', 'Unknown Podcast')
 
-            if podcast_title not in podcast_dict:
-                # Create new podcast
-                podcast = Podcast(
-                    title=podcast_title,
-                    description=episode_dict.get('podDescription', ''),
-                    rss_url=episode_dict.get('rssUrl', ''),
-                    language=episode_dict.get('language', 'en'),
-                    explicit=bool(episode_dict.get('explicit', 0)),
-                    image_url=episode_dict.get('imageUrl'),
-                    itunes_author=episode_dict.get('itunesAuthor'),
-                    itunes_owner_name=episode_dict.get('itunesOwnerName'),
-                    host=episode_dict.get('host'),
-                    created_on=episode_dict.get('createdOn'),
-                    last_update=episode_dict.get('lastUpdate'),
-                    oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
-                )
-                podcast_dict[podcast_title] = podcast
+                    if podcast_title not in podcast_dict:
+                        # Create new podcast
+                        podcast = Podcast(
+                            title=podcast_title,
+                            description=record.get('podDescription', ''),
+                            rss_url=record.get('rssUrl', ''),
+                            language=record.get('language', 'en'),
+                            explicit=bool(record.get('explicit', 0)),
+                            image_url=record.get('imageUrl'),
+                            itunes_author=record.get('itunesAuthor'),
+                            itunes_owner_name=record.get('itunesOwnerName'),
+                            host=record.get('host'),
+                            created_on=record.get('createdOn'),
+                            last_update=record.get('lastUpdate'),
+                            oldest_episode_date=record.get('oldestEpisodeDate'),
+                        )
+                        podcast_dict[podcast_title] = podcast
 
-                # Yield the podcast when we first encounter it
-                yield podcast
+                    # Add episode to podcast
+                    episode = self._create_episode_from_dict(record)
+                    podcast_dict[podcast_title].add_episode(episode)
+                    episode_count += 1
 
-            # Add episode to podcast
-            episode = self._create_episode_from_dict(episode_dict)
-            podcast_dict[podcast_title].add_episode(episode)
+                    # Log progress every 100 episodes or every 30 seconds
+                    current_time = time.time()
+                    if episode_count % 100 == 0 or current_time - last_progress_time > 30:
+                        elapsed = current_time - start_time
+                        rate = episode_count / elapsed if elapsed > 0 else 0
+                        logger.info(f"  Processed {episode_count:,} episodes... ({len(podcast_dict)} podcasts, skipped: {skipped_count}, rate: {rate:.1f} eps/sec)")
+                        last_progress_time = current_time
 
-            # Load turns for this episode
-            self._load_turns_for_episode_streaming(episode)
+                except Exception as e:
+                    skipped_count += 1
+                    logger.debug(f"Skipping podcast episode due to processing error: {e}")
+                    continue
+
+        # Yield each podcast
+        podcast_count = 0
+        for podcast in podcast_dict.values():
+            podcast_count += 1
+            yield podcast
+
+        total_time = time.time() - start_time
+        logger.info("=" * 60)
+        logger.info("STREAMING PODCAST ITERATION COMPLETED")
+        logger.info("=" * 60)
+        logger.info(f"Total time: {total_time:.2f} seconds")
+        logger.info(f"Podcasts processed: {podcast_count:,}")
+        logger.info(f"Episodes processed: {episode_count:,}")
+        logger.info(f"Episodes skipped: {skipped_count:,}")
+        logger.info(f"Processing rate: {episode_count/total_time:.1f} episodes/second")
+        logger.info("✓ Streaming podcast iteration completed successfully!")
 
     def get_dataset_statistics(self) -> Dict[str, Any]:
         """
@@ -995,109 +1788,108 @@ class SPORCDataset:
         logger.info("Calculating dataset statistics in streaming mode...")
 
         total_episodes = 0
-        total_duration_seconds = 0.0
+        total_duration = 0.0
         category_counts = {}
         language_counts = {}
-        speaker_counts = {}
-        episode_types = {
-            'solo': 0,
-            'interview': 0,
-            'panel': 0,
-            'long_form': 0,
-            'short_form': 0,
-        }
-
+        speaker_count_distribution = {}
+        duration_distribution = {}
         podcast_titles = set()
 
-        for episode_dict in self._episode_data:
-            total_episodes += 1
-            podcast_titles.add(episode_dict.get('podTitle', 'Unknown Podcast'))
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    total_episodes += 1
+                    duration = float(record.get('durationSeconds', 0))
+                    total_duration += duration
+                    podcast_titles.add(record.get('podTitle', 'Unknown Podcast'))
 
-            duration = float(episode_dict.get('durationSeconds', 0))
-            total_duration_seconds += duration
+                    # Count categories
+                    for i in range(1, 11):
+                        category = record.get(f'category{i}')
+                        if category:
+                            category_counts[category] = category_counts.get(category, 0) + 1
 
-            # Categories
-            for i in range(1, 11):
-                category = episode_dict.get(f'category{i}')
-                if category:
-                    category_counts[category] = category_counts.get(category, 0) + 1
+                    # Count languages
+                    language = record.get('language', 'en')
+                    language_counts[language] = language_counts.get(language, 0) + 1
 
-            # Language
-            language = episode_dict.get('language', 'en')
-            language_counts[language] = language_counts.get(language, 0) + 1
+                    # Count speaker counts
+                    speaker_count = len(record.get('mainEpSpeakers', []))
+                    speaker_count_distribution[str(speaker_count)] = speaker_count_distribution.get(str(speaker_count), 0) + 1
 
-            # Speaker count
-            main_speakers = episode_dict.get('mainEpSpeakers', [])
-            if isinstance(main_speakers, str):
-                if main_speakers == "SPEAKER_DATA_UNAVAILABLE":
-                    speaker_count = 0
-                else:
-                    speaker_count = 1
-            else:
-                speaker_count = len(main_speakers)
+                    # Count duration ranges
+                    duration_minutes = duration / 60
+                    if duration_minutes < 10:
+                        duration_range = "0-10 minutes"
+                    elif duration_minutes < 30:
+                        duration_range = "10-30 minutes"
+                    elif duration_minutes < 60:
+                        duration_range = "30-60 minutes"
+                    else:
+                        duration_range = "60+ minutes"
+                    duration_distribution[duration_range] = duration_distribution.get(duration_range, 0) + 1
 
-            speaker_counts[speaker_count] = speaker_counts.get(speaker_count, 0) + 1
-
-            # Episode types (simplified calculation)
-            host_names = episode_dict.get('hostPredictedNames', [])
-            guest_names = episode_dict.get('guestPredictedNames', [])
-
-            if isinstance(host_names, str):
-                host_names = [] if host_names == "NO_HOST_PREDICTED" else [host_names]
-            if isinstance(guest_names, str):
-                guest_names = [] if guest_names == "NO_GUEST_PREDICTED" else [guest_names]
-
-            total_speakers = len(host_names) + len(guest_names)
-
-            if total_speakers == 1:
-                episode_types['solo'] += 1
-            elif total_speakers == 2:
-                episode_types['interview'] += 1
-            else:
-                episode_types['panel'] += 1
-
-            if duration > 1800:  # 30 minutes
-                episode_types['long_form'] += 1
-            elif duration < 600:  # 10 minutes
-                episode_types['short_form'] += 1
-
-        total_duration_hours = total_duration_seconds / 3600.0
-        avg_duration_minutes = (total_duration_seconds / 60.0) / total_episodes if total_episodes > 0 else 0.0
+                except Exception as e:
+                    logger.debug(f"Skipping record during statistics calculation: {e}")
+                    continue
 
         return {
             'total_podcasts': len(podcast_titles),
             'total_episodes': total_episodes,
-            'total_duration_hours': total_duration_hours,
-            'avg_episode_duration_minutes': avg_duration_minutes,
+            'total_duration_hours': total_duration / 3600,
+            'avg_episode_duration_minutes': (total_duration / 60) / total_episodes if total_episodes > 0 else 0,
             'category_distribution': category_counts,
             'language_distribution': language_counts,
-            'speaker_distribution': speaker_counts,
-            'episode_types': episode_types,
+            'speaker_count_distribution': speaker_count_distribution,
+            'duration_distribution': duration_distribution,
         }
 
     def __len__(self) -> int:
-        """Return the number of episodes in the dataset."""
+        """Get the number of episodes in the dataset."""
         if self.streaming and not self._selective_mode:
-            # In streaming mode, we can't easily get the length without iterating
-            # This would be expensive, so we'll raise an error
-            raise RuntimeError("len() is not available in streaming mode. Use iterate_episodes() instead.")
+            raise RuntimeError(
+                "len() is not available in streaming mode unless a subset has been loaded. "
+                "Use load_podcast_subset() first or iterate_episodes() to count manually."
+            )
         return len(self._episodes)
 
     def __str__(self) -> str:
         """String representation of the dataset."""
+        mode_info = []
+        if self._local_mode:
+            mode_info.append("local")
+        if self.streaming:
+            mode_info.append("streaming")
+        if self._selective_mode:
+            mode_info.append("selective")
+
+        mode_str = f"({', '.join(mode_info)})" if mode_info else ""
+
         if self.streaming:
             if self._selective_mode:
-                return f"SPORCDataset(streaming=True, selective=True, {len(self._podcasts)} podcasts, {len(self._episodes)} episodes)"
-            return f"SPORCDataset(streaming=True)"
-        return f"SPORCDataset({len(self._podcasts)} podcasts, {len(self._episodes)} episodes)"
+                return f"SPORCDataset{mode_str}({len(self._podcasts)} podcasts, {len(self._episodes)} episodes)"
+            return f"SPORCDataset{mode_str}"
+        return f"SPORCDataset{mode_str}({len(self._podcasts)} podcasts, {len(self._episodes)} episodes)"
 
     def __repr__(self) -> str:
         """Detailed string representation of the dataset."""
+        mode_info = []
+        if self._local_mode:
+            mode_info.append("local")
+        if self.streaming:
+            mode_info.append("streaming")
+        if self._selective_mode:
+            mode_info.append("selective")
+
+        mode_str = f"({', '.join(mode_info)})" if mode_info else ""
+
         if self.streaming:
             if self._selective_mode:
-                return f"SPORCDataset(streaming=True, selective=True, podcasts={len(self._podcasts)}, episodes={len(self._episodes)}, loaded={self._loaded})"
-            return f"SPORCDataset(streaming=True, loaded={self._loaded})"
-        return (f"SPORCDataset(podcasts={len(self._podcasts)}, episodes={len(self._episodes)}, "
+                return f"SPORCDataset{mode_str}(podcasts={len(self._podcasts)}, episodes={len(self._episodes)}, loaded={self._loaded})"
+            return f"SPORCDataset{mode_str}(loaded={self._loaded})"
+        return (f"SPORCDataset{mode_str}(podcasts={len(self._podcasts)}, episodes={len(self._episodes)}, "
                 f"loaded={self._loaded})")
 
     def _search_podcasts_by_subcategory_streaming(self, subcategory: str) -> List[Podcast]:
@@ -1105,41 +1897,143 @@ class SPORCDataset:
         logger.info(f"Searching for podcasts with subcategory '{subcategory}' in streaming mode...")
 
         podcast_dict: Dict[str, Podcast] = {}
-        subcategory_lower = subcategory.lower()
+        podcast_has_subcategory: Dict[str, bool] = {}
 
-        for episode_dict in self._episode_data:
-            # Check if this episode has the subcategory
-            episode_categories = []
-            for i in range(1, 11):
-                category = episode_dict.get(f'category{i}')
-                if category:
-                    episode_categories.append(category)
+        # Use safe iterator to handle data type inconsistencies
+        for record in self._create_safe_iterator(self._dataset):
+            # Only process episode records
+            if 'episodeTitle' in record or 'podTitle' in record:
+                try:
+                    podcast_title = record.get('podTitle', 'Unknown Podcast')
 
-            if not any(subcategory_lower in cat.lower() for cat in episode_categories):
+                    # Check if this episode has the subcategory
+                    has_subcategory = False
+                    for i in range(1, 11):
+                        category = record.get(f'category{i}')
+                        if category == subcategory:
+                            has_subcategory = True
+                            break
+
+                    if has_subcategory:
+                        podcast_has_subcategory[podcast_title] = True
+
+                        if podcast_title not in podcast_dict:
+                            # Create new podcast
+                            podcast = Podcast(
+                                title=podcast_title,
+                                description=record.get('podDescription', ''),
+                                rss_url=record.get('rssUrl', ''),
+                                language=record.get('language', 'en'),
+                                explicit=bool(record.get('explicit', 0)),
+                                image_url=record.get('imageUrl'),
+                                itunes_author=record.get('itunesAuthor'),
+                                itunes_owner_name=record.get('itunesOwnerName'),
+                                host=record.get('host'),
+                                created_on=record.get('createdOn'),
+                                last_update=record.get('lastUpdate'),
+                                oldest_episode_date=record.get('oldestEpisodeDate'),
+                            )
+                            podcast_dict[podcast_title] = podcast
+
+                        # Add episode to podcast
+                        episode = self._create_episode_from_dict(record)
+                        podcast_dict[podcast_title].add_episode(episode)
+
+                except Exception as e:
+                    logger.debug(f"Skipping record during subcategory search: {e}")
+                    continue
+
+        logger.info(f"Found {len(podcast_dict)} podcasts with subcategory '{subcategory}'")
+        return list(podcast_dict.values())
+
+    @staticmethod
+    def find_cache_directories() -> Dict[str, str]:
+        """
+        Find existing Hugging Face cache directories on the system.
+
+        Returns:
+            Dictionary mapping cache type to directory path
+        """
+        cache_dirs = {}
+
+        # Common cache locations
+        possible_paths = [
+            ("default", Path.home() / ".cache" / "huggingface"),
+            ("macos", Path.home() / "Library" / "Caches" / "huggingface"),
+            ("windows", Path.home() / "AppData" / "Local" / "huggingface"),
+            ("user_cache", Path.home() / ".cache" / "huggingface_hub"),
+        ]
+
+        for cache_type, path in possible_paths:
+            if path.exists():
+                cache_dirs[cache_type] = str(path)
+
+        return cache_dirs
+
+    @staticmethod
+    def validate_cache_directory(cache_dir: str) -> bool:
+        """
+        Validate if a cache directory contains the SPORC dataset.
+
+        Args:
+            cache_dir: Path to the cache directory to validate
+
+        Returns:
+            True if the directory contains SPORC dataset files, False otherwise
+        """
+        import os
+        from pathlib import Path
+
+        cache_path = Path(cache_dir)
+        if not cache_path.exists():
+            return False
+
+        # Look for SPORC dataset files
+        sporc_indicators = [
+            "datasets/blitt/SPoRC",
+            "datasets--blitt--SPoRC",
+            "SPoRC",
+        ]
+
+        for indicator in sporc_indicators:
+            if (cache_path / indicator).exists():
+                return True
+
+        return False
+
+    @staticmethod
+    def list_available_datasets(cache_dir: Optional[str] = None) -> List[str]:
+        """
+        List available datasets in a cache directory.
+
+        Args:
+            cache_dir: Path to cache directory. If None, searches common locations.
+
+        Returns:
+            List of available dataset names
+        """
+        import os
+        from pathlib import Path
+
+        datasets = []
+
+        if cache_dir:
+            search_paths = [Path(cache_dir)]
+        else:
+            search_paths = [
+                Path.home() / ".cache" / "huggingface",
+                Path.home() / "Library" / "Caches" / "huggingface",
+                Path.home() / "AppData" / "Local" / "huggingface",
+            ]
+
+        for search_path in search_paths:
+            if not search_path.exists():
                 continue
 
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+            # Look for dataset directories
+            for item in search_path.iterdir():
+                if item.is_dir():
+                    if "datasets" in item.name or "SPoRC" in item.name:
+                        datasets.append(str(item))
 
-            if podcast_title not in podcast_dict:
-                # Create new podcast
-                podcast = Podcast(
-                    title=podcast_title,
-                    description=episode_dict.get('podDescription', ''),
-                    rss_url=episode_dict.get('rssUrl', ''),
-                    language=episode_dict.get('language', 'en'),
-                    explicit=bool(episode_dict.get('explicit', 0)),
-                    image_url=episode_dict.get('imageUrl'),
-                    itunes_author=episode_dict.get('itunesAuthor'),
-                    itunes_owner_name=episode_dict.get('itunesOwnerName'),
-                    host=episode_dict.get('host'),
-                    created_on=episode_dict.get('createdOn'),
-                    last_update=episode_dict.get('lastUpdate'),
-                    oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
-                )
-                podcast_dict[podcast_title] = podcast
-
-            # Add this episode to the podcast
-            episode = self._create_episode_from_dict(episode_dict)
-            podcast_dict[podcast_title].add_episode(episode)
-
-        return list(podcast_dict.values())
+        return datasets
