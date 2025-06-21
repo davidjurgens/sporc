@@ -121,7 +121,7 @@ sporc = SPORCDataset(streaming=True)
 
 **Disadvantages:**
 - Slower access to individual items
-- Cannot use `len()` (raises RuntimeError)
+- In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.
 - Search operations require iterating through data
 - Cannot iterate over data multiple times without reloading
 - Statistics calculation requires full iteration

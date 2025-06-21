@@ -438,3 +438,5 @@ if __name__ == "__main__":
 ```
 
 This example demonstrates a complete streaming workflow that efficiently processes the entire dataset while monitoring memory usage and performance.
+
+In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.

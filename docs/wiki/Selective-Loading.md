@@ -598,3 +598,5 @@ if __name__ == "__main__":
 ```
 
 This example demonstrates the complete workflow of selective loading, from initialization to detailed analysis, with memory monitoring and error handling.
+
+Note: In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.

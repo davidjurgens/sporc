@@ -242,7 +242,7 @@ Get the number of episodes in the dataset.
 print(f"Dataset contains {len(sporc)} episodes")
 ```
 
-**Note:** In streaming mode, this raises a `RuntimeError` unless a subset has been loaded.
+**Note:** In streaming mode, this returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.
 
 ### `streaming -> bool`
 

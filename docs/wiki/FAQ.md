@@ -241,6 +241,10 @@ sporc.load_podcast_subset(categories=['Education'])
 2. Load a subset first: `sporc.load_podcast_subset(...)`
 3. Count manually: `count = sum(1 for _ in sporc.iterate_episodes())`
 
+### Q: What does `len(sporc)` return in streaming mode?
+
+**A:** In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.
+
 ## Data Quality
 
 ### Q: What do the overlap proportion metrics mean?

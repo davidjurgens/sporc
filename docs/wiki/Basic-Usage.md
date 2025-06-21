@@ -667,3 +667,5 @@ Now that you understand the basics, you can:
 3. Check out [Categories](Categories.md) to understand how to use podcast categories
 4. Try the [Streaming Mode](Streaming-Mode.md) for memory-efficient processing
 5. Learn about [Selective Loading](Selective-Loading.md) for filtered subset processing
+
+Note: In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.
