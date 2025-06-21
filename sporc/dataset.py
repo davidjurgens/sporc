@@ -413,6 +413,120 @@ class SPORCDataset:
         except (ValueError, TypeError):
             return default
 
+    def _safe_string(self, value, default: str = '') -> str:
+        """
+        Safely convert a value to string, handling None and other edge cases.
+
+        Args:
+            value: The value to convert
+            default: Default value to return if conversion fails
+
+        Returns:
+            str: The converted value or default
+        """
+        if value is None:
+            return default
+        try:
+            return str(value).strip()
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_boolean(self, value, default: bool = False) -> bool:
+        """
+        Safely convert a value to boolean, handling None and other edge cases.
+
+        Args:
+            value: The value to convert
+            default: Default value to return if conversion fails
+
+        Returns:
+            bool: The converted value or default
+        """
+        if value is None:
+            return default
+        try:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes', 'on')
+            return bool(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_list(self, value, default: list = None) -> list:
+        """
+        Safely convert a value to list, handling None and other edge cases.
+
+        Args:
+            value: The value to convert
+            default: Default value to return if conversion fails
+
+        Returns:
+            list: The converted value or default
+        """
+        if default is None:
+            default = []
+        if value is None:
+            return default
+        try:
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str):
+                # Handle special string cases
+                if value in ['NO_HOST_PREDICTED', 'NO_GUEST_PREDICTED', 'NO_NEITHER_IDENTIFIED', 'SPEAKER_DATA_UNAVAILABLE']:
+                    return []
+                # Try to parse as JSON if it looks like a list
+                if value.startswith('[') and value.endswith(']'):
+                    try:
+                        import json
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        pass
+                # If it's a single item, wrap it in a list
+                return [value] if value.strip() else []
+            if isinstance(value, (tuple, set)):
+                return list(value)
+            # For other types, try to convert to string and wrap in list
+            return [str(value)]
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_dict(self, value, default: dict = None) -> dict:
+        """
+        Safely convert a value to dict, handling None and other edge cases.
+
+        Args:
+            value: The value to convert
+            default: Default value to return if conversion fails
+
+        Returns:
+            dict: The converted value or default
+        """
+        if default is None:
+            default = {}
+        if value is None:
+            return default
+        try:
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str):
+                # Handle special string cases
+                if value == 'SPEAKER_DATA_UNAVAILABLE':
+                    return {}
+                # Try to parse as JSON
+                if value.startswith('{') and value.endswith('}'):
+                    try:
+                        import json
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        pass
+                return {}
+            return {}
+        except (ValueError, TypeError):
+            return default
+
     def _clean_record(self, record):
         """Clean and validate a record to handle data type inconsistencies."""
         try:
@@ -643,7 +757,7 @@ class SPORCDataset:
         seen_mp3urls = set()
         deduped_episode_data = []
         for episode in episode_data:
-            mp3url = episode.get('mp3url')
+            mp3url = self._safe_string(episode.get('mp3url'))
             if mp3url and mp3url not in seen_mp3urls:
                 deduped_episode_data.append(episode)
                 seen_mp3urls.add(mp3url)
@@ -658,8 +772,8 @@ class SPORCDataset:
 
         # Process episodes in order (they're already grouped by podcast)
         for episode_dict in episode_data:
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
-            ep_title = episode_dict.get('epTitle', 'NO_TITLE')
+            podcast_title = self._safe_string(episode_dict.get('podTitle'), 'Unknown Podcast')
+            ep_title = self._safe_string(episode_dict.get('epTitle'), 'NO_TITLE')
             logger.debug(f"Processing episode: {ep_title} (podcast: {podcast_title})")
 
             # Check if we've moved to a new podcast
@@ -683,7 +797,7 @@ class SPORCDataset:
 
         # After grouping, print the number of episodes per podcast
         for pt, eps in podcast_groups.items():
-            logger.debug(f"Podcast '{pt}' has {len(eps)} episodes: {[e.get('epTitle', 'NO_TITLE') for e in eps]}")
+            logger.debug(f"Podcast '{pt}' has {len(eps)} episodes: {[self._safe_string(e.get('epTitle'), 'NO_TITLE') for e in eps]}")
 
         grouping_time = time.time() - grouping_start
         logger.info(f"✓ Grouping completed in {grouping_time:.2f} seconds")
@@ -702,20 +816,7 @@ class SPORCDataset:
 
             # Create podcast object
             first_episode = episode_dicts[0]
-            podcast = Podcast(
-                title=podcast_title,
-                description=first_episode.get('podDescription', ''),
-                rss_url=first_episode.get('rssUrl', ''),
-                language=first_episode.get('language', 'en'),
-                explicit=bool(first_episode.get('explicit', 0)),
-                image_url=first_episode.get('imageUrl'),
-                itunes_author=first_episode.get('itunesAuthor'),
-                itunes_owner_name=first_episode.get('itunesOwnerName'),
-                host=first_episode.get('host'),
-                created_on=first_episode.get('createdOn'),
-                last_update=first_episode.get('lastUpdate'),
-                oldest_episode_date=first_episode.get('oldestEpisodeDate'),
-            )
+            podcast = self._create_podcast_from_dict(first_episode, podcast_title)
 
             # Create episode objects
             for episode_dict in episode_dicts:
@@ -820,7 +921,7 @@ class SPORCDataset:
         seen_mp3urls = set()
         deduped_episode_data = []
         for episode in episode_data:
-            mp3url = episode.get('mp3url')
+            mp3url = self._safe_string(episode.get('mp3url'))
             if mp3url and mp3url not in seen_mp3urls:
                 deduped_episode_data.append(episode)
                 seen_mp3urls.add(mp3url)
@@ -837,7 +938,9 @@ class SPORCDataset:
 
         # Process episodes in order (they're already grouped by podcast)
         for episode_dict in episode_data:
-            podcast_title = episode_dict.get('podTitle', 'Unknown Podcast')
+            podcast_title = self._safe_string(episode_dict.get('podTitle'), 'Unknown Podcast')
+            ep_title = self._safe_string(episode_dict.get('epTitle'), 'NO_TITLE')
+            logger.debug(f"Processing episode: {ep_title} (podcast: {podcast_title})")
 
             # Check if we've moved to a new podcast
             if current_podcast_title is None or podcast_title != current_podcast_title:
@@ -856,8 +959,8 @@ class SPORCDataset:
                     'categories': set(),
                     'hosts': set(),
                     'total_duration': 0.0,
-                    'language': episode_dict.get('language', 'en'),
-                    'explicit': bool(episode_dict.get('explicit', 0))
+                    'language': self._safe_string(episode_dict.get('language'), 'en'),
+                    'explicit': self._safe_boolean(episode_dict.get('explicit'), False)
                 }
 
             # Add episode to current podcast
@@ -867,17 +970,13 @@ class SPORCDataset:
 
             # Collect categories
             for i in range(1, 11):
-                category = episode_dict.get(f'category{i}')
+                category = self._safe_string(episode_dict.get(f'category{i}'))
                 if category:
                     current_metadata['categories'].add(category)
 
             # Collect hosts
-            host_names = episode_dict.get('hostPredictedNames', [])
-            if isinstance(host_names, str):
-                if host_names != "NO_HOST_PREDICTED":
-                    current_metadata['hosts'].add(host_names)
-            else:
-                current_metadata['hosts'].update(host_names)
+            host_names = self._safe_list(episode_dict.get('hostPredictedNames'))
+            current_metadata['hosts'].update(host_names)
 
         # Process the last podcast
         if current_podcast_title is not None and current_episodes:
@@ -902,20 +1001,7 @@ class SPORCDataset:
 
             # Create podcast object
             first_episode = episode_dicts[0]
-            podcast = Podcast(
-                title=podcast_title,
-                description=first_episode.get('podDescription', ''),
-                rss_url=first_episode.get('rssUrl', ''),
-                language=first_episode.get('language', 'en'),
-                explicit=bool(first_episode.get('explicit', 0)),
-                image_url=first_episode.get('imageUrl'),
-                itunes_author=first_episode.get('itunesAuthor'),
-                itunes_owner_name=first_episode.get('itunesOwnerName'),
-                host=first_episode.get('host'),
-                created_on=first_episode.get('createdOn'),
-                last_update=first_episode.get('lastUpdate'),
-                oldest_episode_date=first_episode.get('oldestEpisodeDate'),
-            )
+            podcast = self._create_podcast_from_dict(first_episode, podcast_title)
 
             # Create episode objects
             for episode_dict in episode_dicts:
@@ -992,78 +1078,42 @@ class SPORCDataset:
     def _create_episode_from_dict(self, episode_dict: Dict[str, Any]) -> Episode:
         """Create an Episode object from a dictionary."""
         # Handle host names
-        host_names = episode_dict.get('hostPredictedNames', [])
-        if isinstance(host_names, str):
-            if host_names == "NO_HOST_PREDICTED":
-                host_names = []
-            else:
-                host_names = [host_names]
+        host_names = self._safe_list(episode_dict.get('hostPredictedNames'))
 
         # Handle guest names
-        guest_names = episode_dict.get('guestPredictedNames', [])
-        if isinstance(guest_names, str):
-            if guest_names == "NO_GUEST_PREDICTED":
-                guest_names = []
-            else:
-                guest_names = [guest_names]
+        guest_names = self._safe_list(episode_dict.get('guestPredictedNames'))
 
         # Handle neither names
-        neither_names = episode_dict.get('neitherPredictedNames', [])
-        if isinstance(neither_names, str):
-            if neither_names == "NO_NEITHER_IDENTIFIED":
-                neither_names = []
-            else:
-                neither_names = [neither_names]
+        neither_names = self._safe_list(episode_dict.get('neitherPredictedNames'))
 
         # Handle speaker labels
-        main_speakers = episode_dict.get('mainEpSpeakers', [])
-        if isinstance(main_speakers, str):
-            if main_speakers == "SPEAKER_DATA_UNAVAILABLE":
-                main_speakers = []
-            else:
-                main_speakers = [main_speakers]
+        main_speakers = self._safe_list(episode_dict.get('mainEpSpeakers'))
 
         # Handle host speaker labels
-        host_speaker_labels = episode_dict.get('hostSpeakerLabels', {})
-        if isinstance(host_speaker_labels, str):
-            if host_speaker_labels == "SPEAKER_DATA_UNAVAILABLE":
-                host_speaker_labels = {}
-            else:
-                try:
-                    host_speaker_labels = json.loads(host_speaker_labels)
-                except (json.JSONDecodeError, TypeError):
-                    host_speaker_labels = {}
+        host_speaker_labels = self._safe_dict(episode_dict.get('hostSpeakerLabels'))
 
         # Handle guest speaker labels
-        guest_speaker_labels = episode_dict.get('guestSpeakerLabels', {})
-        if isinstance(guest_speaker_labels, str):
-            if guest_speaker_labels == "SPEAKER_DATA_UNAVAILABLE":
-                guest_speaker_labels = {}
-            else:
-                try:
-                    guest_speaker_labels = json.loads(guest_speaker_labels)
-                except (json.JSONDecodeError, TypeError):
-                    guest_speaker_labels = {}
+        guest_speaker_labels = self._safe_dict(episode_dict.get('guestSpeakerLabels'))
 
         return Episode(
-            title=episode_dict.get('epTitle', ''),
-            description=episode_dict.get('epDescription', ''),
-            mp3_url=episode_dict.get('mp3url', ''),
+            title=self._safe_string(episode_dict.get('epTitle')),
+            description=self._safe_string(episode_dict.get('epDescription')),
+            mp3_url=self._safe_string(episode_dict.get('mp3url')),
             duration_seconds=self._safe_float(episode_dict.get('durationSeconds', 0)),
-            transcript=episode_dict.get('transcript', ''),
-            podcast_title=episode_dict.get('podTitle', ''),
-            podcast_description=episode_dict.get('podDescription', ''),
-            rss_url=episode_dict.get('rssUrl', ''),
-            category1=episode_dict.get('category1'),
-            category2=episode_dict.get('category2'),
-            category3=episode_dict.get('category3'),
-            category4=episode_dict.get('category4'),
-            category5=episode_dict.get('category5'),
-            category6=episode_dict.get('category6'),
-            category7=episode_dict.get('category7'),
-            category8=episode_dict.get('category8'),
-            category9=episode_dict.get('category9'),
-            category10=episode_dict.get('category10'),
+            transcript=self._safe_string(episode_dict.get('transcript')),
+            podcast_title=self._safe_string(episode_dict.get('podTitle')),
+            podcast_description=self._safe_string(episode_dict.get('podDescription')),
+            rss_url=self._safe_string(episode_dict.get('rssUrl')),
+            category1=self._safe_string(episode_dict.get('category1')),
+            category2=self._safe_string(episode_dict.get('category2')),
+            category3=self._safe_string(episode_dict.get('category3')),
+            category4=self._safe_string(episode_dict.get('category4')),
+            category5=self._safe_string(episode_dict.get('category5')),
+            category6=self._safe_string(episode_dict.get('category6')),
+            category7=self._safe_string(episode_dict.get('category7')),
+            category8=self._safe_string(episode_dict.get('category8')),
+            category9=self._safe_string(episode_dict.get('category9')),
+            category10=self._safe_string(episode_dict.get('category10')),
             host_predicted_names=host_names,
             guest_predicted_names=guest_names,
             neither_predicted_names=neither_names,
@@ -1074,13 +1124,13 @@ class SPORCDataset:
             overlap_prop_turn_count=self._safe_float(episode_dict.get('overlapPropTurnCount', 0)),
             avg_turn_duration=self._safe_float(episode_dict.get('avgTurnDuration', 0)),
             total_speaker_labels=self._safe_float(episode_dict.get('totalSpLabels', 0)),
-            language=episode_dict.get('language', 'en'),
-            explicit=bool(episode_dict.get('explicit', 0)),
-            image_url=episode_dict.get('imageUrl'),
-            episode_date_localized=episode_dict.get('episodeDateLocalized'),
-            oldest_episode_date=episode_dict.get('oldestEpisodeDate'),
-            last_update=episode_dict.get('lastUpdate'),
-            created_on=episode_dict.get('createdOn'),
+            language=self._safe_string(episode_dict.get('language'), 'en'),
+            explicit=self._safe_boolean(episode_dict.get('explicit'), False),
+            image_url=self._safe_string(episode_dict.get('imageUrl')),
+            episode_date_localized=self._safe_string(episode_dict.get('episodeDateLocalized')),
+            oldest_episode_date=self._safe_string(episode_dict.get('oldestEpisodeDate')),
+            last_update=self._safe_string(episode_dict.get('lastUpdate')),
+            created_on=self._safe_string(episode_dict.get('createdOn')),
         )
 
     def _load_turns_for_episodes(self, speaker_turns: List[Dict[str, Any]]) -> None:
@@ -1096,7 +1146,7 @@ class SPORCDataset:
         turns_by_episode: Dict[str, List[Dict[str, Any]]] = {}
 
         for turn in speaker_turns:
-            mp3_url = turn.get('mp3url')
+            mp3_url = self._safe_string(turn.get('mp3url'))
             if mp3_url:
                 if mp3_url not in turns_by_episode:
                     turns_by_episode[mp3_url] = []
@@ -1183,7 +1233,7 @@ class SPORCDataset:
             # Only process episode records
             if 'epTitle' in record or 'podTitle' in record:
                 try:
-                    podcast_title = record.get('podTitle', '')
+                    podcast_title = self._safe_string(record.get('podTitle'), '')
 
                     # Check if we've moved to a new podcast
                     if current_podcast_title is None or podcast_title != current_podcast_title:
@@ -1223,18 +1273,18 @@ class SPORCDataset:
 
         # Create podcast object
         podcast = Podcast(
-            title=podcast_info['title'],
-            description=podcast_info['description'],
-            rss_url=podcast_info['rss_url'],
-            language=podcast_info['language'],
-            explicit=podcast_info['explicit'],
-            image_url=podcast_info['image_url'],
-            itunes_author=podcast_info['itunes_author'],
-            itunes_owner_name=podcast_info['itunes_owner_name'],
-            host=podcast_info['host'],
-            created_on=podcast_info['created_on'],
-            last_update=podcast_info['last_update'],
-            oldest_episode_date=podcast_info['oldest_episode_date'],
+            title=self._safe_string(podcast_info['title']),
+            description=self._safe_string(podcast_info['description']),
+            rss_url=self._safe_string(podcast_info['rss_url']),
+            language=self._safe_string(podcast_info['language'], 'en'),
+            explicit=self._safe_boolean(podcast_info['explicit'], False),
+            image_url=self._safe_string(podcast_info['image_url']),
+            itunes_author=self._safe_string(podcast_info['itunes_author']),
+            itunes_owner_name=self._safe_string(podcast_info['itunes_owner_name']),
+            host=self._safe_string(podcast_info['host']),
+            created_on=self._safe_string(podcast_info['created_on']),
+            last_update=self._safe_string(podcast_info['last_update']),
+            oldest_episode_date=self._safe_string(podcast_info['oldest_episode_date']),
         )
 
         # Create episode objects
@@ -1260,7 +1310,7 @@ class SPORCDataset:
         for record in self._dataset:
             # Only process speaker turn records
             if 'turnText' in record or 'speaker' in record:
-                if record.get('mp3url') == episode.mp3_url:
+                if self._safe_string(record.get('mp3url')) == episode.mp3_url:
                     turns_data.append(record)
 
         episode.load_turns(turns_data)
@@ -1587,7 +1637,7 @@ class SPORCDataset:
             # Only process episode records
             if 'epTitle' in record or 'podTitle' in record:
                 try:
-                    podcast_title = record.get('podTitle', 'Unknown Podcast')
+                    podcast_title = self._safe_string(record.get('podTitle'), 'Unknown Podcast')
 
                     # Check if we've moved to a new podcast
                     if current_podcast_title is None or podcast_title != current_podcast_title:
@@ -1608,17 +1658,17 @@ class SPORCDataset:
                         # Create new podcast
                         current_podcast = Podcast(
                             title=podcast_title,
-                            description=record.get('podDescription', ''),
-                            rss_url=record.get('rssUrl', ''),
-                            language=record.get('language', 'en'),
-                            explicit=bool(record.get('explicit', 0)),
-                            image_url=record.get('imageUrl'),
-                            itunes_author=record.get('itunesAuthor'),
-                            itunes_owner_name=record.get('itunesOwnerName'),
-                            host=record.get('host'),
-                            created_on=record.get('createdOn'),
-                            last_update=record.get('lastUpdate'),
-                            oldest_episode_date=record.get('oldestEpisodeDate'),
+                            description=self._safe_string(record.get('podDescription')),
+                            rss_url=self._safe_string(record.get('rssUrl')),
+                            language=self._safe_string(record.get('language'), 'en'),
+                            explicit=self._safe_boolean(record.get('explicit'), False),
+                            image_url=self._safe_string(record.get('imageUrl')),
+                            itunes_author=self._safe_string(record.get('itunesAuthor')),
+                            itunes_owner_name=self._safe_string(record.get('itunesOwnerName')),
+                            host=self._safe_string(record.get('host')),
+                            created_on=self._safe_string(record.get('createdOn')),
+                            last_update=self._safe_string(record.get('lastUpdate')),
+                            oldest_episode_date=self._safe_string(record.get('oldestEpisodeDate')),
                         )
                         current_podcast_title = podcast_title
 
@@ -1729,20 +1779,20 @@ class SPORCDataset:
                     total_episodes += 1
                     duration = self._safe_float(record.get('durationSeconds', 0))
                     total_duration += duration
-                    podcast_titles.add(record.get('podTitle', 'Unknown Podcast'))
+                    podcast_titles.add(self._safe_string(record.get('podTitle'), 'Unknown Podcast'))
 
                     # Count categories
                     for i in range(1, 11):
-                        category = record.get(f'category{i}')
+                        category = self._safe_string(record.get(f'category{i}'))
                         if category:
                             category_counts[category] = category_counts.get(category, 0) + 1
 
                     # Count languages
-                    language = record.get('language', 'en')
+                    language = self._safe_string(record.get('language'), 'en')
                     language_counts[language] = language_counts.get(language, 0) + 1
 
                     # Count speaker counts
-                    speaker_count = len(record.get('mainEpSpeakers', []))
+                    speaker_count = len(self._safe_list(record.get('mainEpSpeakers')))
                     speaker_count_distribution[str(speaker_count)] = speaker_count_distribution.get(str(speaker_count), 0) + 1
 
                     # Count duration ranges
@@ -1834,7 +1884,7 @@ class SPORCDataset:
             # Only process episode records
             if 'epTitle' in record or 'podTitle' in record:
                 try:
-                    podcast_title = record.get('podTitle', 'Unknown Podcast')
+                    podcast_title = self._safe_string(record.get('podTitle'), 'Unknown Podcast')
 
                     # Check if we've moved to a new podcast
                     if current_podcast_title is None or podcast_title != current_podcast_title:
@@ -1849,23 +1899,23 @@ class SPORCDataset:
                         # Create new podcast
                         current_podcast = Podcast(
                             title=podcast_title,
-                            description=record.get('podDescription', ''),
-                            rss_url=record.get('rssUrl', ''),
-                            language=record.get('language', 'en'),
-                            explicit=bool(record.get('explicit', 0)),
-                            image_url=record.get('imageUrl'),
-                            itunes_author=record.get('itunesAuthor'),
-                            itunes_owner_name=record.get('itunesOwnerName'),
-                            host=record.get('host'),
-                            created_on=record.get('createdOn'),
-                            last_update=record.get('lastUpdate'),
-                            oldest_episode_date=record.get('oldestEpisodeDate'),
+                            description=self._safe_string(record.get('podDescription')),
+                            rss_url=self._safe_string(record.get('rssUrl')),
+                            language=self._safe_string(record.get('language'), 'en'),
+                            explicit=self._safe_boolean(record.get('explicit'), False),
+                            image_url=self._safe_string(record.get('imageUrl')),
+                            itunes_author=self._safe_string(record.get('itunesAuthor')),
+                            itunes_owner_name=self._safe_string(record.get('itunesOwnerName')),
+                            host=self._safe_string(record.get('host')),
+                            created_on=self._safe_string(record.get('createdOn')),
+                            last_update=self._safe_string(record.get('lastUpdate')),
+                            oldest_episode_date=self._safe_string(record.get('oldestEpisodeDate')),
                         )
 
                     # Check if this episode has the subcategory
                     has_subcategory = False
                     for i in range(1, 11):
-                        category = record.get(f'category{i}')
+                        category = self._safe_string(record.get(f'category{i}'))
                         if category == subcategory:
                             has_subcategory = True
                             current_has_subcategory = True
@@ -1977,3 +2027,20 @@ class SPORCDataset:
                         datasets.append(str(item))
 
         return datasets
+
+    def _create_podcast_from_dict(self, first_episode: Dict[str, Any], podcast_title: str) -> Podcast:
+        """Create a Podcast object from a dictionary with safe field handling."""
+        return Podcast(
+            title=podcast_title,
+            description=self._safe_string(first_episode.get('podDescription')),
+            rss_url=self._safe_string(first_episode.get('rssUrl')),
+            language=self._safe_string(first_episode.get('language'), 'en'),
+            explicit=self._safe_boolean(first_episode.get('explicit'), False),
+            image_url=self._safe_string(first_episode.get('imageUrl')),
+            itunes_author=self._safe_string(first_episode.get('itunesAuthor')),
+            itunes_owner_name=self._safe_string(first_episode.get('itunesOwnerName')),
+            host=self._safe_string(first_episode.get('host')),
+            created_on=self._safe_string(first_episode.get('createdOn')),
+            last_update=self._safe_string(first_episode.get('lastUpdate')),
+            oldest_episode_date=self._safe_string(first_episode.get('oldestEpisodeDate')),
+        )
