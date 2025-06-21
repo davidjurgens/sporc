@@ -746,6 +746,40 @@ class TestSPORCDataset:
     """Test the SPORCDataset class."""
 
     @patch('sporc.dataset.load_dataset')
+    def test_safe_float_method(self, mock_load_dataset):
+        """Test the _safe_float method handles None and edge cases correctly."""
+        # Mock the dataset loading to avoid downloading real data
+        mock_episode_data = MagicMock()
+        mock_episode_data.__iter__ = lambda x: iter([])
+        mock_speaker_turn_data = MagicMock()
+        mock_speaker_turn_data.__iter__ = lambda x: iter([])
+        mock_load_dataset.side_effect = [mock_episode_data, mock_speaker_turn_data]
+
+        dataset = SPORCDataset()
+
+        # Test None values
+        assert dataset._safe_float(None) == 0.0
+        assert dataset._safe_float(None, default=5.0) == 5.0
+
+        # Test valid values
+        assert dataset._safe_float(10) == 10.0
+        assert dataset._safe_float(10.5) == 10.5
+        assert dataset._safe_float("15.7") == 15.7
+        assert dataset._safe_float("0") == 0.0
+
+        # Test invalid values
+        assert dataset._safe_float("invalid") == 0.0
+        assert dataset._safe_float("invalid", default=3.0) == 3.0
+        assert dataset._safe_float({}) == 0.0
+        assert dataset._safe_float([]) == 0.0
+
+        # Test edge cases
+        assert dataset._safe_float("") == 0.0
+        assert dataset._safe_float("   ") == 0.0
+        assert dataset._safe_float(0) == 0.0
+        assert dataset._safe_float(-5) == -5.0
+
+    @patch('sporc.dataset.load_dataset')
     def test_dataset_initialization(self, mock_load_dataset):
         """Test SPORCDataset initialization."""
         # Mock the dataset loading

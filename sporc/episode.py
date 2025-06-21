@@ -154,12 +154,16 @@ class Episode:
             if isinstance(self.episode_date_localized, str):
                 # Try to convert string to int/float
                 try:
-                    timestamp = float(self.episode_date_localized)
+                    timestamp = float(self.episode_date_localized) if self.episode_date_localized else None
                 except (ValueError, TypeError):
                     # If conversion fails, return None
                     return None
             else:
                 timestamp = self.episode_date_localized
+
+            # If timestamp is None, return None
+            if timestamp is None:
+                return None
 
             # Convert from milliseconds to seconds and create datetime
             return datetime.fromtimestamp(timestamp / 1000)

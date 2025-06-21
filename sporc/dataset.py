@@ -10,6 +10,7 @@ import warnings
 import os
 import time
 import gzip
+from tqdm import tqdm
 
 try:
     from datasets import load_dataset, Dataset, IterableDataset
@@ -175,7 +176,7 @@ class SPORCDataset:
 
     def __init__(self, cache_dir: Optional[str] = None, use_auth_token: Optional[str] = None,
                  streaming: bool = False, custom_cache_dir: Optional[str] = None,
-                 local_data_dir: Optional[str] = None):
+                 local_data_dir: Optional[str] = None, show_progress: bool = True):
         """
         Initialize the SPORC dataset.
 
@@ -192,12 +193,14 @@ class SPORCDataset:
                            - episodeLevelDataSample.jsonl.gz
                            - speakerTurnData.jsonl.gz
                            - speakerTurnDataSample.jsonl.gz
+            show_progress: Whether to show tqdm progress bars during loading (default: True)
         """
         self.cache_dir = custom_cache_dir if custom_cache_dir else cache_dir
         self.use_auth_token = use_auth_token
         self.streaming = streaming
         self.custom_cache_dir = custom_cache_dir
         self.local_data_dir = local_data_dir
+        self.show_progress = show_progress
 
         # Data storage
         self._dataset = None
@@ -392,6 +395,24 @@ class SPORCDataset:
         total_time = time.time() - start_time
         logger.debug(f"Safe iterator completed: {processed_count:,} processed, {cleaned_count:,} cleaned, {skipped_count:,} skipped in {total_time:.2f}s")
 
+    def _safe_float(self, value, default: float = 0.0) -> float:
+        """
+        Safely convert a value to float, handling None and other edge cases.
+
+        Args:
+            value: The value to convert
+            default: Default value to return if conversion fails
+
+        Returns:
+            float: The converted value or default
+        """
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def _clean_record(self, record):
         """Clean and validate a record to handle data type inconsistencies."""
         try:
@@ -426,7 +447,7 @@ class SPORCDataset:
             for field in numeric_fields:
                 if field in record and record[field] is not None:
                     try:
-                        record[field] = float(record[field])
+                        record[field] = self._safe_float(record[field])
                     except (ValueError, TypeError):
                         record[field] = 0.0
                         numeric_fields_cleaned += 1
@@ -599,7 +620,8 @@ class SPORCDataset:
         episode_count = 0
         turn_count = 0
 
-        for record in self._dataset:
+        tqdm_bar = tqdm(self._dataset, total=1134058, disable=not self.show_progress, desc="Loading episodes")
+        for record in tqdm_bar:
             record_count += 1
             if record_count % 10000 == 0:
                 logger.debug(f"  Processed {record_count:,} records... (episodes: {episode_count}, turns: {turn_count})")
@@ -777,7 +799,8 @@ class SPORCDataset:
         speaker_turns = []
         record_count = 0
 
-        for record in self._dataset:
+        tqdm_bar = tqdm(self._dataset, total=1134058, disable=not self.show_progress, desc="Loading episodes (subset)")
+        for record in tqdm_bar:
             record_count += 1
             if record_count % 10000 == 0:
                 logger.debug(f"  Scanned {record_count:,} records... (episodes: {len(episode_data)}, turns: {len(speaker_turns)})")
@@ -840,7 +863,7 @@ class SPORCDataset:
             # Add episode to current podcast
             current_episodes.append(episode_dict)
             current_metadata['episodes'].append(episode_dict)
-            current_metadata['total_duration'] += float(episode_dict.get('durationSeconds', 0))
+            current_metadata['total_duration'] += self._safe_float(episode_dict.get('durationSeconds', 0))
 
             # Collect categories
             for i in range(1, 11):
@@ -1026,7 +1049,7 @@ class SPORCDataset:
             title=episode_dict.get('epTitle', ''),
             description=episode_dict.get('epDescription', ''),
             mp3_url=episode_dict.get('mp3url', ''),
-            duration_seconds=float(episode_dict.get('durationSeconds', 0)),
+            duration_seconds=self._safe_float(episode_dict.get('durationSeconds', 0)),
             transcript=episode_dict.get('transcript', ''),
             podcast_title=episode_dict.get('podTitle', ''),
             podcast_description=episode_dict.get('podDescription', ''),
@@ -1047,10 +1070,10 @@ class SPORCDataset:
             main_ep_speakers=main_speakers,
             host_speaker_labels=host_speaker_labels,
             guest_speaker_labels=guest_speaker_labels,
-            overlap_prop_duration=float(episode_dict.get('overlapPropDuration', 0)),
-            overlap_prop_turn_count=float(episode_dict.get('overlapPropTurnCount', 0)),
-            avg_turn_duration=float(episode_dict.get('avgTurnDuration', 0)),
-            total_speaker_labels=float(episode_dict.get('totalSpLabels', 0)),
+            overlap_prop_duration=self._safe_float(episode_dict.get('overlapPropDuration', 0)),
+            overlap_prop_turn_count=self._safe_float(episode_dict.get('overlapPropTurnCount', 0)),
+            avg_turn_duration=self._safe_float(episode_dict.get('avgTurnDuration', 0)),
+            total_speaker_labels=self._safe_float(episode_dict.get('totalSpLabels', 0)),
             language=episode_dict.get('language', 'en'),
             explicit=bool(episode_dict.get('explicit', 0)),
             image_url=episode_dict.get('imageUrl'),
@@ -1704,7 +1727,7 @@ class SPORCDataset:
             if 'epTitle' in record or 'podTitle' in record:
                 try:
                     total_episodes += 1
-                    duration = float(record.get('durationSeconds', 0))
+                    duration = self._safe_float(record.get('durationSeconds', 0))
                     total_duration += duration
                     podcast_titles.add(record.get('podTitle', 'Unknown Podcast'))
 
