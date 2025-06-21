@@ -1550,6 +1550,13 @@ class SPORCDataset:
             List of all Podcast objects
         """
         if self.streaming and not self._selective_mode:
+            raise RuntimeError(
+                "get_all_podcasts() is not available in streaming mode unless a subset has been loaded. "
+                f"Use load_podcast_subset() first or iterate_podcasts() to access all {1134058} episodes. "
+                "Note: The dataset contains approximately 1,134,058 episodes across multiple podcasts."
+            )
+
+        if self.streaming and self._selective_mode:
             return self._get_all_podcasts_streaming()
 
         if not self._loaded:
@@ -1576,6 +1583,13 @@ class SPORCDataset:
             List of all Episode objects
         """
         if self.streaming and not self._selective_mode:
+            raise RuntimeError(
+                "get_all_episodes() is not available in streaming mode unless a subset has been loaded. "
+                f"Use load_podcast_subset() first or iterate_episodes() to access all {1134058} episodes. "
+                "Note: The dataset contains approximately 1,134,058 episodes."
+            )
+
+        if self.streaming and self._selective_mode:
             return self._get_all_episodes_streaming()
 
         if not self._loaded:
@@ -1700,6 +1714,19 @@ class SPORCDataset:
             Dictionary with dataset statistics
         """
         if self.streaming and not self._selective_mode:
+            # Return estimated statistics for streaming mode without subset loading
+            return {
+                'total_podcasts': 'Unknown (streaming mode)',
+                'total_episodes': 1134058,
+                'total_duration_hours': 'Unknown (streaming mode)',
+                'avg_episode_duration_minutes': 'Unknown (streaming mode)',
+                'category_distribution': 'Unknown (streaming mode)',
+                'language_distribution': 'Unknown (streaming mode)',
+                'speaker_distribution': 'Unknown (streaming mode)',
+                'note': 'Use load_podcast_subset() or iterate_episodes() for detailed statistics in streaming mode'
+            }
+
+        if self.streaming and self._selective_mode:
             return self._get_dataset_statistics_streaming()
 
         if not self._loaded:
@@ -1827,10 +1854,8 @@ class SPORCDataset:
     def __len__(self) -> int:
         """Get the number of episodes in the dataset."""
         if self.streaming and not self._selective_mode:
-            raise RuntimeError(
-                "len() is not available in streaming mode unless a subset has been loaded. "
-                "Use load_podcast_subset() first or iterate_episodes() to count manually."
-            )
+            # Return the maximum number of episodes in the dataset when in streaming mode
+            return 1134058
         return len(self._episodes)
 
     def __str__(self) -> str:

@@ -385,7 +385,7 @@ class TestStreamingMode:
 
     @patch('sporc.dataset.load_dataset')
     def test_streaming_length_error(self, mock_load_dataset):
-        """Test that len() raises error in streaming mode."""
+        """Test that len() returns the correct value in streaming mode."""
         # Mock dataset
         mock_episode_data = MagicMock()
         mock_episode_data.__iter__ = lambda x: iter([])
@@ -395,9 +395,8 @@ class TestStreamingMode:
 
         dataset = SPORCDataset(streaming=True)
 
-        # Test that len() raises RuntimeError
-        with pytest.raises(RuntimeError, match="len\\(\\) is not available in streaming mode"):
-            len(dataset)
+        # Test that len() returns the maximum number of episodes in streaming mode
+        assert len(dataset) == 1134058
 
     @patch('sporc.dataset.load_dataset')
     def test_streaming_iterate_episodes_error(self, mock_load_dataset):

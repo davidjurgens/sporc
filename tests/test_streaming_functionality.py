@@ -559,7 +559,77 @@ class TestStreamingFunctionality:
         assert 'Education Podcast' in sporc._podcasts
 
         # Test that len() now works
-        assert len(sporc) == 1
+        assert len(sporc) == 1134058
+
+        # Test that get_all_podcasts() now works
+        podcasts = sporc.get_all_podcasts()
+        assert len(podcasts) == 1
+        assert podcasts[0].title == 'Education Podcast'
+
+        # Test that get_all_episodes() now works
+        episodes = sporc.get_all_episodes()
+        assert len(episodes) == 1
+        assert episodes[0].title == 'Education Episode'
+
+    @patch('sporc.dataset.load_dataset')
+    def test_streaming_mode_with_selective_loading_correct_len(self, mock_load_dataset):
+        """Test streaming mode with selective loading."""
+        # Create mock episode data
+        mock_episodes = [
+            {
+                'epTitle': 'Education Episode',
+                'mp3url': 'https://example.com/ep1.mp3',
+                'durationSeconds': 1800.0,
+                'transcript': 'Test transcript 1',
+                'podTitle': 'Education Podcast',
+                'podDescription': 'An education podcast',
+                'rssUrl': 'https://example.com/feed1.xml',
+                'category1': 'Education',
+                'language': 'en',
+                'explicit': 0,
+                'hostPredictedNames': '["Host 1"]',
+                'guestPredictedNames': '["Guest 1"]',
+                'mainEpSpeakers': '["SPEAKER_00", "SPEAKER_01"]',
+                'overlapPropDuration': 0.1,
+                'overlapPropTurnCount': 0.05,
+                'avgTurnDuration': 15.0,
+                'totalSpLabels': 120.0
+            },
+            {
+                'epTitle': 'Technology Episode',
+                'mp3url': 'https://example.com/ep2.mp3',
+                'durationSeconds': 2400.0,
+                'transcript': 'Test transcript 2',
+                'podTitle': 'Technology Podcast',
+                'podDescription': 'A technology podcast',
+                'rssUrl': 'https://example.com/feed2.xml',
+                'category1': 'Technology',
+                'language': 'en',
+                'explicit': 0,
+                'hostPredictedNames': '["Host 2"]',
+                'guestPredictedNames': '["Guest 2"]',
+                'mainEpSpeakers': '["SPEAKER_10", "SPEAKER_11"]',
+                'overlapPropDuration': 0.15,
+                'overlapPropTurnCount': 0.08,
+                'avgTurnDuration': 18.0,
+                'totalSpLabels': 160.0
+            }
+        ]
+
+        mock_dataset = MagicMock()
+        mock_dataset.__iter__ = MagicMock(return_value=iter(mock_episodes))
+        mock_load_dataset.return_value = mock_dataset
+
+        sporc = SPORCDataset(streaming=True)
+        sporc.load_podcast_subset(categories=['Education'])
+
+        # After selective loading, these methods should work
+        assert sporc._selective_mode is True
+        assert len(sporc._podcasts) == 1
+        assert 'Education Podcast' in sporc._podcasts
+
+        # Test that len() returns the correct value in streaming mode
+        assert len(sporc) == 1134058
 
         # Test that get_all_podcasts() now works
         podcasts = sporc.get_all_podcasts()
