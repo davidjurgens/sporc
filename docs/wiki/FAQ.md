@@ -210,6 +210,158 @@ print(f"Subcategories: {podcast.subcategories}")
 print(f"Primary subcategory: {podcast.primary_subcategory}")
 ```
 
+## Sampling
+
+### Q: How do I limit the number of results returned by search operations?
+
+**A:** Use the `max_episodes` parameter with `search_episodes`:
+
+```python
+# Get first 50 long episodes
+first_long = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=50,
+    sampling_mode="first"
+)
+
+# Get random 100 episodes
+random_episodes = sporc.search_episodes(
+    max_episodes=100,
+    sampling_mode="random"
+)
+```
+
+### Q: What sampling modes are available?
+
+**A:** There are two sampling modes:
+
+- **`"first"`** (default): Returns the first N items encountered that match the criteria
+- **`"random"`**: Returns a random sample of N items that match the criteria
+
+```python
+# First N sampling
+first_episodes = sporc.search_episodes(max_episodes=25, sampling_mode="first")
+
+# Random sampling
+random_episodes = sporc.search_episodes(max_episodes=25, sampling_mode="random")
+```
+
+### Q: How do I limit the number of podcasts loaded in selective mode?
+
+**A:** Use the `max_podcasts` parameter with `load_podcast_subset`:
+
+```python
+# Load first 100 education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=100,
+    sampling_mode="first"
+)
+
+# Load random 50 substantial podcasts
+sporc.load_podcast_subset(
+    min_episodes=10,
+    max_podcasts=50,
+    sampling_mode="random"
+)
+```
+
+### Q: Can I limit episodes when loading podcast subsets?
+
+**A:** Yes, use the `max_episodes` parameter:
+
+```python
+# Load first 1000 episodes from education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_episodes=1000,
+    sampling_mode="first"
+)
+```
+
+### Q: How do I iterate over a limited number of episodes or podcasts?
+
+**A:** Use the `max_episodes` or `max_podcasts` parameters with iteration methods:
+
+```python
+# Iterate first 500 episodes
+for episode in sporc.iterate_episodes(max_episodes=500, sampling_mode="first"):
+    print(f"Processing: {episode.title}")
+
+# Iterate random 100 podcasts
+for podcast in sporc.iterate_podcasts(max_podcasts=100, sampling_mode="random"):
+    print(f"Podcast: {podcast.title}")
+```
+
+### Q: When should I use random sampling vs first N sampling?
+
+**A:**
+- **Use "first" sampling when:**
+  - You want consistent, reproducible results
+  - You're doing development or testing
+  - You want the earliest/most recent content
+  - Performance is critical (first sampling is faster)
+
+- **Use "random" sampling when:**
+  - You need a representative sample for research
+  - You want to avoid bias from ordering
+  - You're doing statistical analysis
+  - You want diverse content from across the dataset
+
+### Q: Is random sampling truly random?
+
+**A:** Yes, the random sampling uses reservoir sampling to ensure unbiased selection even with large datasets. The sampling is consistent within a session but may vary between different runs.
+
+### Q: How do I get a representative sample for research?
+
+**A:** Use random sampling with a reasonable sample size:
+
+```python
+# Get a representative sample for research
+research_sample = sporc.search_episodes(
+    max_episodes=1000,
+    sampling_mode="random"
+)
+
+# Analyze the sample
+sample_stats = sporc.get_dataset_statistics()
+print(f"Sample size: {len(research_sample)}")
+print(f"Sample duration: {sample_stats['total_duration_hours']:.1f} hours")
+```
+
+### Q: Can I use sampling with complex search criteria?
+
+**A:** Yes, sampling works with all search criteria:
+
+```python
+# Get random 200 high-quality education episodes
+quality_education = sporc.search_episodes(
+    category="Education",
+    min_duration=1800,                # 30+ minutes
+    max_overlap_prop_duration=0.1,    # Good quality
+    max_episodes=200,
+    sampling_mode="random"
+)
+```
+
+### Q: How do I use sampling for development and testing?
+
+**A:** Use first N sampling with a small sample size:
+
+```python
+# Load a small subset for development
+sporc.load_podcast_subset(
+    max_podcasts=10,
+    sampling_mode="first"
+)
+
+# Or get a small sample for testing
+test_episodes = sporc.search_episodes(
+    max_episodes=10,
+    sampling_mode="first"
+)
+```
+
 ## Performance and Memory
 
 ### Q: The dataset is using too much memory. What can I do?

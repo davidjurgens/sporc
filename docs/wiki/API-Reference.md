@@ -49,6 +49,8 @@ Search for episodes matching specific criteria.
 - `min_total_duration` (float, optional): Minimum total podcast duration in hours
 - `max_overlap_prop_duration` (float, optional): Maximum overlap proportion by duration
 - `max_overlap_prop_turn_count` (float, optional): Maximum overlap proportion by turn count
+- `max_episodes` (int, optional): Maximum number of episodes to return
+- `sampling_mode` (str, optional): Sampling mode ("first" or "random"). Default is "first"
 
 **Returns:**
 - `List[Episode]`: List of matching episodes
@@ -92,18 +94,26 @@ Get all episodes in the dataset.
 
 **Note:** In streaming mode, this requires iterating through the entire dataset.
 
-#### `iterate_podcasts() -> Iterator[Podcast]`
+#### `iterate_podcasts(max_podcasts=None, sampling_mode="first") -> Iterator[Podcast]`
 
 Iterate over podcasts without loading them all into memory.
+
+**Parameters:**
+- `max_podcasts` (int, optional): Maximum number of podcasts to iterate over
+- `sampling_mode` (str, optional): Sampling mode ("first" or "random"). Default is "first"
 
 **Returns:**
 - `Iterator[Podcast]`: Iterator over podcasts
 
 **Note:** Only available in streaming mode.
 
-#### `iterate_episodes() -> Iterator[Episode]`
+#### `iterate_episodes(max_episodes=None, sampling_mode="first") -> Iterator[Episode]`
 
 Iterate over episodes without loading them all into memory.
+
+**Parameters:**
+- `max_episodes` (int, optional): Maximum number of episodes to iterate over
+- `sampling_mode` (str, optional): Sampling mode ("first" or "random"). Default is "first"
 
 **Returns:**
 - `Iterator[Episode]`: Iterator over episodes
@@ -121,6 +131,8 @@ Load a filtered subset of podcasts into memory for fast access.
 - `min_total_duration` (float, optional): Minimum total podcast duration in hours
 - `language` (str, optional): Language code to filter by
 - `max_podcasts` (int, optional): Maximum number of podcasts to load
+- `max_episodes` (int, optional): Maximum number of episodes to load
+- `sampling_mode` (str, optional): Sampling mode ("first" or "random"). Default is "first"
 
 **Note:** Only available in streaming mode. This method modifies the dataset object.
 

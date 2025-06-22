@@ -84,6 +84,28 @@ sporc.load_podcast_subset(
     language='en',
     explicit=False
 )
+
+# Sampling: Limit results and control sampling mode
+# Load first 100 education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=100,
+    sampling_mode="first"
+)
+
+# Load random 50 podcasts with at least 5 episodes
+sporc.load_podcast_subset(
+    min_episodes=5,
+    max_podcasts=50,
+    sampling_mode="random"
+)
+
+# Load first 1000 episodes from education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_episodes=1000,
+    sampling_mode="first"
+)
 ```
 
 ## Filtering Examples
@@ -172,6 +194,79 @@ curated_episodes = sporc.get_all_episodes()
 curated_podcasts = sporc.get_all_podcasts()
 
 print(f"Curated podcasts: {[p.title for p in curated_podcasts]}")
+```
+
+### Sampling with Selective Loading
+
+Selective loading supports sampling to limit the number of results:
+
+```python
+# Load first 100 education podcasts
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=100,
+    sampling_mode="first"
+)
+
+print(f"Loaded first {len(sporc)} education episodes")
+
+# Load random 50 substantial podcasts
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    min_episodes=10,
+    max_podcasts=50,
+    sampling_mode="random"
+)
+
+print(f"Loaded random {len(sporc)} episodes from substantial podcasts")
+
+# Load first 1000 episodes from science podcasts
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    categories=['science'],
+    max_episodes=1000,
+    sampling_mode="first"
+)
+
+print(f"Loaded first {len(sporc)} science episodes")
+```
+
+### Research Sampling
+
+```python
+# Get a representative sample for research
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    categories=['education', 'science'],
+    max_podcasts=500,
+    sampling_mode="random"
+)
+
+print(f"Loaded random sample of {len(sporc)} episodes for research")
+
+# Analyze the sample
+sample_stats = sporc.get_dataset_statistics()
+print(f"Sample duration: {sample_stats['total_duration_hours']:.1f} hours")
+print(f"Sample categories: {dict(sorted(sample_stats['category_distribution'].items(), key=lambda x: x[1], reverse=True)[:5])}")
+```
+
+### Development and Testing
+
+```python
+# Load a small subset for development
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    max_podcasts=10,
+    sampling_mode="first"
+)
+
+print(f"Loaded {len(sporc)} episodes for development")
+
+# Test your code on the small subset
+for episode in sporc.get_all_episodes():
+    print(f"Testing with: {episode.title}")
+    # Your analysis code here
 ```
 
 ## Performance Benefits

@@ -45,6 +45,22 @@ print(f"Found {len(short_episodes)} episodes shorter than 10 minutes")
 # Find very long episodes (more than 2 hours)
 very_long_episodes = sporc.search_episodes(min_duration=7200)
 print(f"Found {len(very_long_episodes)} episodes longer than 2 hours")
+
+# Sampling: Limit search results
+# Get first 50 long episodes
+first_long_episodes = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=50,
+    sampling_mode="first"
+)
+print(f"Found first {len(first_long_episodes)} long episodes")
+
+# Get random 100 episodes
+random_episodes = sporc.search_episodes(
+    max_episodes=100,
+    sampling_mode="random"
+)
+print(f"Found random {len(random_episodes)} episodes")
 ```
 
 ### Search Episodes by Speaker Count
@@ -656,3 +672,112 @@ except Exception as e:
 8. **Combine Criteria**: Use multiple criteria for more precise results
 9. **Use Subcategories**: Leverage specific subcategories for more targeted searches
 10. **Check Category Validity**: Use the category utility functions to validate category names
+
+## Sampling with Search
+
+### Basic Sampling Examples
+
+```python
+# Get first 25 long episodes
+first_long = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=25,
+    sampling_mode="first"
+)
+print(f"Found first {len(first_long)} long episodes")
+
+# Get random 50 episodes with guests
+random_guests = sporc.search_episodes(
+    min_speakers=2,
+    max_episodes=50,
+    sampling_mode="random"
+)
+print(f"Found random {len(random_guests)} episodes with guests")
+
+# Get first 100 episodes from specific host
+first_host_episodes = sporc.search_episodes(
+    host_name="Simon Shapiro",
+    max_episodes=100,
+    sampling_mode="first"
+)
+print(f"Found first {len(first_host_episodes)} episodes by Simon Shapiro")
+```
+
+### Sampling with Complex Criteria
+
+```python
+# Get random 200 high-quality education episodes
+random_quality_education = sporc.search_episodes(
+    category="Education",
+    min_duration=1800,                # 30+ minutes
+    max_overlap_prop_duration=0.1,    # Good quality
+    max_episodes=200,
+    sampling_mode="random"
+)
+print(f"Found random {len(random_quality_education)} quality education episodes")
+
+# Get first 50 long interviews
+first_long_interviews = sporc.search_episodes(
+    min_duration=3600,                # 1+ hour
+    min_speakers=2,                   # At least 2 speakers
+    max_speakers=3,                   # At most 3 speakers
+    max_episodes=50,
+    sampling_mode="first"
+)
+print(f"Found first {len(first_long_interviews)} long interview episodes")
+
+# Get random 100 substantial science episodes
+random_science = sporc.search_episodes(
+    category="Science",
+    min_duration=1800,                # 30+ minutes
+    min_total_duration=2.0,           # 2+ hours total
+    max_episodes=100,
+    sampling_mode="random"
+)
+print(f"Found random {len(random_science)} substantial science episodes")
+```
+
+### Research Sampling
+
+```python
+# Get a representative sample for research
+research_sample = sporc.search_episodes(
+    max_episodes=1000,
+    sampling_mode="random"
+)
+print(f"Created research sample of {len(research_sample)} episodes")
+
+# Analyze the sample
+sample_durations = [ep.duration_minutes for ep in research_sample]
+print(f"Sample duration range: {min(sample_durations):.1f} - {max(sample_durations):.1f} minutes")
+print(f"Sample average duration: {sum(sample_durations)/len(sample_durations):.1f} minutes")
+
+# Get category distribution in sample
+sample_categories = {}
+for episode in research_sample:
+    for category in episode.categories:
+        sample_categories[category] = sample_categories.get(category, 0) + 1
+
+print("Sample category distribution:")
+for category, count in sorted(sample_categories.items(), key=lambda x: x[1], reverse=True)[:10]:
+    print(f"  {category}: {count}")
+```
+
+### Development and Testing Sampling
+
+```python
+# Get a small sample for development
+dev_sample = sporc.search_episodes(
+    max_episodes=10,
+    sampling_mode="first"
+)
+print(f"Created development sample of {len(dev_sample)} episodes")
+
+# Test your analysis on the small sample
+for episode in dev_sample:
+    print(f"Testing with: {episode.title}")
+    turns = episode.get_all_turns()
+    print(f"  Turns: {len(turns)}")
+    print(f"  Duration: {episode.duration_minutes:.1f} minutes")
+    # Your analysis code here
+```

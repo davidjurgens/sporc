@@ -60,6 +60,28 @@ sporc.load_podcast_subset(
     min_total_duration=2.0,  # 2+ hours
     language='en'
 )
+
+# Sampling: Limit results and control sampling mode
+# Load first 100 education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=100,
+    sampling_mode="first"
+)
+
+# Load random 50 podcasts with at least 5 episodes
+sporc.load_podcast_subset(
+    min_episodes=5,
+    max_podcasts=50,
+    sampling_mode="random"
+)
+
+# Load random 1000 episodes from education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_episodes=1000,
+    sampling_mode="random"
+)
 ```
 
 **Note**: The dataset will be downloaded automatically on first use. This may take some time depending on your internet connection.
@@ -259,6 +281,28 @@ long_interviews = sporc.search_episodes(
     min_speakers=2,     # At least 2 speakers
     category="education"
 )
+
+# Sampling: Limit search results
+# Get first 50 long episodes
+first_long_episodes = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=50,
+    sampling_mode="first"
+)
+
+# Get random 100 education episodes
+random_education_episodes = sporc.search_episodes(
+    category="education",
+    max_episodes=100,
+    sampling_mode="random"
+)
+
+# Get first 25 episodes with guests
+first_guest_episodes = sporc.search_episodes(
+    min_speakers=2,
+    max_episodes=25,
+    sampling_mode="first"
+)
 ```
 
 **Note**: In streaming mode, search operations require iterating through the dataset and may be slower than in memory mode. In selective mode, searches are fast O(1) operations on the loaded subset.
@@ -359,6 +403,183 @@ sporc = SPORCDataset(streaming=True)
 sporc.load_podcast_subset(min_episodes=20, min_total_duration=10.0)
 # Now you can analyze substantial, established podcasts
 ```
+
+## Sampling Functionality
+
+### Overview
+
+The SPORC package provides sampling functionality to limit the number of results returned by various operations. This is useful for:
+
+- **Performance**: Processing smaller subsets for faster analysis
+- **Memory efficiency**: Working with manageable amounts of data
+- **Random sampling**: Getting representative samples for research
+- **Development**: Testing with smaller datasets
+
+### Sampling Parameters
+
+Two main parameters control sampling:
+
+- **`max_podcasts`**: Limit the number of podcasts returned
+- **`max_episodes`**: Limit the number of episodes returned
+- **`sampling_mode`**: Control how items are selected ("first" or "random")
+
+### Sampling Modes
+
+#### First N Sampling (`sampling_mode="first"`)
+Returns the first N items encountered that match the criteria:
+
+```python
+# Load first 100 education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=100,
+    sampling_mode="first"
+)
+
+# Get first 50 long episodes
+first_long_episodes = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=50,
+    sampling_mode="first"
+)
+```
+
+#### Random Sampling (`sampling_mode="random"`)
+Returns a random sample of N items that match the criteria:
+
+```python
+# Load random 50 science podcasts
+sporc.load_podcast_subset(
+    categories=['science'],
+    max_podcasts=50,
+    sampling_mode="random"
+)
+
+# Get random 100 episodes with guests
+random_guest_episodes = sporc.search_episodes(
+    min_speakers=2,
+    max_episodes=100,
+    sampling_mode="random"
+)
+```
+
+### Sampling in Different Operations
+
+#### Loading Podcast Subsets
+```python
+sporc = SPORCDataset(streaming=True)
+
+# Load first 200 education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_podcasts=200,
+    sampling_mode="first"
+)
+
+# Load random 100 substantial podcasts
+sporc.load_podcast_subset(
+    min_episodes=10,
+    max_podcasts=100,
+    sampling_mode="random"
+)
+
+# Load first 1000 episodes from education podcasts
+sporc.load_podcast_subset(
+    categories=['education'],
+    max_episodes=1000,
+    sampling_mode="first"
+)
+```
+
+#### Searching Episodes
+```python
+# Get first 25 long episodes
+first_long = sporc.search_episodes(
+    min_duration=1800,
+    max_episodes=25,
+    sampling_mode="first"
+)
+
+# Get random 50 episodes with guests
+random_guests = sporc.search_episodes(
+    min_speakers=2,
+    max_episodes=50,
+    sampling_mode="random"
+)
+
+# Get first 100 episodes from specific host
+first_host_episodes = sporc.search_episodes(
+    host_name="Simon Shapiro",
+    max_episodes=100,
+    sampling_mode="first"
+)
+```
+
+#### Iterating Episodes
+```python
+# Iterate first 500 episodes
+for episode in sporc.iterate_episodes(max_episodes=500, sampling_mode="first"):
+    print(f"Processing: {episode.title}")
+
+# Iterate random 200 episodes
+for episode in sporc.iterate_episodes(max_episodes=200, sampling_mode="random"):
+    print(f"Processing: {episode.title}")
+```
+
+#### Iterating Podcasts
+```python
+# Iterate first 100 podcasts
+for podcast in sporc.iterate_podcasts(max_podcasts=100, sampling_mode="first"):
+    print(f"Podcast: {podcast.title}")
+
+# Iterate random 50 podcasts
+for podcast in sporc.iterate_podcasts(max_podcasts=50, sampling_mode="random"):
+    print(f"Podcast: {podcast.title}")
+```
+
+### Use Cases
+
+#### Research Sampling
+```python
+# Get a random sample for research
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    categories=['education', 'science'],
+    max_podcasts=500,
+    sampling_mode="random"
+)
+# Now you have a representative sample for analysis
+```
+
+#### Development and Testing
+```python
+# Load a small subset for development
+sporc = SPORCDataset(streaming=True)
+sporc.load_podcast_subset(
+    max_podcasts=10,
+    sampling_mode="first"
+)
+# Fast iteration for testing your code
+```
+
+#### Performance Optimization
+```python
+# Process manageable chunks
+for i in range(10):  # 10 batches
+    episodes = sporc.search_episodes(
+        max_episodes=1000,
+        sampling_mode="random"
+    )
+    # Process batch
+    print(f"Processed batch {i+1}")
+```
+
+### Sampling Behavior
+
+- **Streaming Mode**: Uses reservoir sampling for random selection, ensuring unbiased sampling even with large datasets
+- **Memory Mode**: Samples from the already-loaded dataset
+- **Selective Mode**: Samples from the loaded subset
+- **Consistency**: Random sampling uses a fixed seed for reproducible results within a session
 
 ## Working with Conversation Turns
 
