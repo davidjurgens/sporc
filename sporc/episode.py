@@ -383,6 +383,42 @@ class Episode:
         """Get all turns by guests."""
         return self.get_turns_by_role("guest")
 
+    @property
+    def turns(self) -> List[Turn]:
+        """
+        Get all turns for this episode, loading them on-demand if necessary.
+
+        Returns:
+            List of all Turn objects for this episode
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+        return self._turns.copy()
+
+    @property
+    def turn_count(self) -> int:
+        """
+        Get the number of turns in this episode, loading them on-demand if necessary.
+
+        Returns:
+            Number of turns in this episode
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+        return len(self._turns)
+
+    @property
+    def has_turns(self) -> bool:
+        """
+        Check if this episode has turns loaded or available.
+
+        Returns:
+            True if turns are loaded or can be loaded, False otherwise
+        """
+        if self._turns_loaded:
+            return len(self._turns) > 0
+        return False
+
     def get_all_turns(self) -> List[Turn]:
         """
         Get all turns for this episode.

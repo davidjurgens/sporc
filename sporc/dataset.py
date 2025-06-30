@@ -12,6 +12,9 @@ import time
 import gzip
 from tqdm import tqdm
 import random
+import threading
+import pickle
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from datasets import load_dataset, Dataset, IterableDataset
@@ -177,7 +180,8 @@ class SPORCDataset:
 
     def __init__(self, cache_dir: Optional[str] = None, use_auth_token: Optional[str] = None,
                  streaming: bool = False, custom_cache_dir: Optional[str] = None,
-                 local_data_dir: Optional[str] = None, show_progress: bool = True):
+                 local_data_dir: Optional[str] = None, show_progress: bool = True,
+                 load_turns_eagerly: bool = True):
         """
         Initialize the SPORC dataset.
 
@@ -195,6 +199,9 @@ class SPORCDataset:
                            - speakerTurnData.jsonl.gz
                            - speakerTurnDataSample.jsonl.gz
             show_progress: Whether to show tqdm progress bars during loading (default: True)
+            load_turns_eagerly: If True, loads all turn data during initialization (default: True).
+                              If False, turn data is stored separately and loaded on-demand.
+                              This reduces initial memory usage but requires explicit loading calls.
         """
         self.cache_dir = custom_cache_dir if custom_cache_dir else cache_dir
         self.use_auth_token = use_auth_token
@@ -202,6 +209,7 @@ class SPORCDataset:
         self.custom_cache_dir = custom_cache_dir
         self.local_data_dir = local_data_dir
         self.show_progress = show_progress
+        self.load_turns_eagerly = load_turns_eagerly
 
         # Data storage
         self._dataset = None
@@ -210,6 +218,16 @@ class SPORCDataset:
         self._loaded = False
         self._selective_mode = False
         self._local_mode = local_data_dir is not None
+
+        # Lazy loading storage (only used when load_turns_eagerly=False)
+        self._turns_by_episode: Dict[str, List[Dict[str, Any]]] = {}
+        self._turns_loaded = False
+
+        # Indexing system for efficient turn loading
+        self._turn_index: Dict[str, List[int]] = {}  # episode_url -> list of file offsets
+        self._turn_file_path: Optional[str] = None
+        self._index_built = False
+        self._index_lock = threading.Lock()
 
         # Load the dataset
         self._load_dataset()
@@ -833,11 +851,20 @@ class SPORCDataset:
         logger.debug(f"  Created {created_podcasts} Podcast objects, {created_episodes} Episode objects")
 
         # Load turns for all episodes
-        logger.info("Loading speaker turn data for episodes...")
-        turns_start = time.time()
-        self._load_turns_for_episodes(speaker_turns)
-        turns_time = time.time() - turns_start
-        logger.info(f"✓ Speaker turn loading completed in {turns_time:.2f} seconds")
+        if self.load_turns_eagerly:
+            logger.info("Loading speaker turn data for episodes...")
+            turns_start = time.time()
+            self._load_turns_for_episodes(speaker_turns)
+            turns_time = time.time() - turns_start
+            logger.info(f"✓ Speaker turn loading completed in {turns_time:.2f} seconds")
+            self._turns_loaded = True
+        else:
+            logger.info("Storing speaker turn data for lazy loading...")
+            turns_start = time.time()
+            self._store_turns_for_lazy_loading(speaker_turns)
+            turns_time = time.time() - turns_start
+            logger.info(f"✓ Speaker turn data stored for lazy loading in {turns_time:.2f} seconds")
+            # Note: _turns_loaded will be set to True in _store_turns_for_lazy_loading
 
         self._loaded = True
         total_process_time = time.time() - process_start_time
@@ -1463,7 +1490,7 @@ class SPORCDataset:
         if not episode_title.strip():
             episode_title = f"Untitled Episode ({self._safe_string(episode_dict.get('mp3url', 'unknown'))})"
 
-        return Episode(
+        episode = Episode(
             title=episode_title,
             description=self._safe_string(episode_dict.get('epDescription')),
             mp3_url=self._safe_string(episode_dict.get('mp3url')),
@@ -1500,6 +1527,8 @@ class SPORCDataset:
             last_update=self._safe_string(episode_dict.get('lastUpdate')),
             created_on=self._safe_string(episode_dict.get('createdOn')),
         )
+
+        return episode
 
     def _load_turns_for_episodes(self, speaker_turns: List[Dict[str, Any]]) -> None:
         """Load turn data for all episodes."""
@@ -1973,11 +2002,7 @@ class SPORCDataset:
             List of all Podcast objects
         """
         if self.streaming and not self._selective_mode:
-            raise RuntimeError(
-                "get_all_podcasts() is not available in streaming mode unless a subset has been loaded. "
-                f"Use load_podcast_subset() first or iterate_podcasts() to access all {1134058} episodes. "
-                "Note: The dataset contains approximately 1,134,058 episodes across multiple podcasts."
-            )
+            raise RuntimeError("get_all_podcasts() is not available in streaming mode")
 
         if self.streaming and self._selective_mode:
             return self._get_all_podcasts_streaming()
@@ -2006,11 +2031,7 @@ class SPORCDataset:
             List of all Episode objects
         """
         if self.streaming and not self._selective_mode:
-            raise RuntimeError(
-                "get_all_episodes() is not available in streaming mode unless a subset has been loaded. "
-                f"Use load_podcast_subset() first or iterate_episodes() to access all {1134058} episodes. "
-                "Note: The dataset contains approximately 1,134,058 episodes."
-            )
+            raise RuntimeError("get_all_episodes() is not available in streaming mode")
 
         if self.streaming and self._selective_mode:
             return self._get_all_episodes_streaming()
@@ -2215,20 +2236,12 @@ class SPORCDataset:
             Dictionary with dataset statistics
         """
         if self.streaming and not self._selective_mode:
-            # Return estimated statistics for streaming mode without subset loading
-            return {
-                'total_podcasts': 'Unknown (streaming mode)',
-                'total_episodes': 1134058,
-                'total_duration_hours': 'Unknown (streaming mode)',
-                'avg_episode_duration_minutes': 'Unknown (streaming mode)',
-                'category_distribution': 'Unknown (streaming mode)',
-                'language_distribution': 'Unknown (streaming mode)',
-                'speaker_distribution': 'Unknown (streaming mode)',
-                'note': 'Use load_podcast_subset() or iterate_episodes() for detailed statistics in streaming mode'
-            }
+            # Calculate statistics from the entire streaming dataset
+            return self._get_dataset_statistics_streaming()
 
         if self.streaming and self._selective_mode:
-            return self._get_dataset_statistics_streaming()
+            # Return statistics based on the loaded subset
+            return self._get_dataset_statistics_selective()
 
         if not self._loaded:
             raise RuntimeError("Dataset not loaded. Call _load_dataset() first.")
@@ -2348,14 +2361,65 @@ class SPORCDataset:
             'avg_episode_duration_minutes': (total_duration / 60) / total_episodes if total_episodes > 0 else 0,
             'category_distribution': category_counts,
             'language_distribution': language_counts,
-            'speaker_count_distribution': speaker_count_distribution,
+            'speaker_distribution': speaker_count_distribution,
             'duration_distribution': duration_distribution,
+        }
+
+    def _get_dataset_statistics_selective(self) -> Dict[str, Any]:
+        """Get dataset statistics for selective loading mode."""
+        total_episodes = len(self._episodes)
+        total_podcasts = len(self._podcasts)
+
+        if total_episodes == 0:
+            return {
+                'total_podcasts': 0,
+                'total_episodes': 0,
+                'total_duration_hours': 0.0,
+                'avg_episode_duration_minutes': 0.0,
+                'category_distribution': {},
+                'language_distribution': {},
+                'speaker_distribution': {},
+            }
+
+        # Calculate statistics
+        total_duration_seconds = sum(ep.duration_seconds for ep in self._episodes)
+        total_duration_hours = total_duration_seconds / 3600.0
+        avg_duration_minutes = sum(ep.duration_minutes for ep in self._episodes) / total_episodes
+
+        # Category distribution
+        category_counts = {}
+        for episode in self._episodes:
+            for category in episode.categories:
+                category_counts[category] = category_counts.get(category, 0) + 1
+
+        # Language distribution
+        language_counts = {}
+        for episode in self._episodes:
+            language = episode.language
+            language_counts[language] = language_counts.get(language, 0) + 1
+
+        # Speaker count distribution
+        speaker_counts = {}
+        for episode in self._episodes:
+            speaker_count = episode.num_main_speakers
+            speaker_counts[speaker_count] = speaker_counts.get(speaker_count, 0) + 1
+
+        return {
+            'total_podcasts': total_podcasts,
+            'total_episodes': total_episodes,
+            'total_duration_hours': total_duration_hours,
+            'avg_episode_duration_minutes': avg_duration_minutes,
+            'category_distribution': category_counts,
+            'language_distribution': language_counts,
+            'speaker_distribution': speaker_counts,
         }
 
     def __len__(self) -> int:
         """Get the number of episodes in the dataset."""
         if self.streaming and not self._selective_mode:
-            # Return the maximum number of episodes in the dataset when in streaming mode
+            raise RuntimeError("len() is not available in streaming mode")
+        if self.streaming and self._selective_mode:
+            # Return the total number of episodes in the dataset
             return 1134058
         return len(self._episodes)
 
@@ -2570,3 +2634,373 @@ class SPORCDataset:
             last_update=self._safe_string(first_episode.get('lastUpdate')),
             oldest_episode_date=self._safe_string(first_episode.get('oldestEpisodeDate')),
         )
+
+    def _store_turns_for_lazy_loading(self, speaker_turns: List[Dict[str, Any]]) -> None:
+        """Store turn data for lazy loading without loading it into episodes."""
+        logger.info(f"Setting up lazy loading for {len(speaker_turns):,} speaker turn records...")
+
+        if self._local_mode:
+            # For local files, build an index for efficient access
+            logger.info("Building turn index for efficient lazy loading...")
+            self._build_turn_index()
+        else:
+            # For Hugging Face datasets, store in memory (fallback)
+            logger.info("Storing turn data in memory for lazy loading...")
+
+            # Group turns by episode URL
+            logger.info("Grouping turns by episode URL...")
+            grouping_start = time.time()
+
+            for turn in speaker_turns:
+                mp3_url = self._safe_string(turn.get('mp3url'))
+                if mp3_url:
+                    if mp3_url not in self._turns_by_episode:
+                        self._turns_by_episode[mp3_url] = []
+                    self._turns_by_episode[mp3_url].append(turn)
+
+            grouping_time = time.time() - grouping_start
+            logger.info(f"✓ Turn grouping completed in {grouping_time:.2f} seconds")
+            logger.info(f"  Turns grouped into {len(self._turns_by_episode):,} episodes")
+
+        # Set _turns_loaded = True for lazy loading since turns are stored and available
+        # even though they're not loaded into individual episodes yet
+        self._turns_loaded = True
+
+    def load_turns_for_episode(self, episode: Episode) -> None:
+        """
+        Load turn data for a specific episode on-demand.
+
+        Args:
+            episode: Episode to load turns for
+        """
+        if episode._turns_loaded:
+            return
+
+        if not self._turns_loaded:
+            raise RuntimeError("Turn data not available. Dataset may not be loaded or turn data was not stored.")
+
+        # Use efficient indexed loading if available
+        if self._local_mode and self._index_built:
+            self._load_turns_for_episode_efficient(episode)
+            return
+
+        # Fall back to in-memory loading
+        episode_turns = self._turns_by_episode.get(episode.mp3_url, [])
+        if episode_turns:
+            try:
+                episode.load_turns(episode_turns)
+                logger.debug(f"Loaded {len(episode_turns)} turns for episode: {episode.title}")
+            except ValueError as e:
+                if "End time must be after start time" in str(e) or "Text cannot be empty" in str(e):
+                    logger.debug(f"Skipping episode {episode.title} due to invalid turn data: {e}")
+                    # Try to load turns with filtering
+                    try:
+                        # Filter out turns with invalid time ranges or empty text
+                        valid_turns = []
+                        for turn in episode_turns:
+                            start_time = self._safe_float(turn.get('startTime', 0))
+                            end_time = self._safe_float(turn.get('endTime', 0))
+                            text = self._safe_string(turn.get('turnText', ''))
+                            if end_time > start_time and text.strip():
+                                valid_turns.append(turn)
+                        episode.load_turns(valid_turns)
+                        logger.debug(f"Successfully loaded {len(valid_turns)} valid turns for episode {episode.title}")
+                    except Exception as e2:
+                        logger.debug(f"Failed to load even filtered turns for episode {episode.title}: {e2}")
+                else:
+                    raise e
+        else:
+            logger.debug(f"No turns found for episode: {episode.title}")
+
+    def load_turns_for_podcast(self, podcast: Podcast) -> None:
+        """
+        Load turn data for all episodes in a podcast on-demand.
+
+        Args:
+            podcast: Podcast to load turns for
+        """
+        logger.info(f"Loading turns for podcast: {podcast.title} ({len(podcast.episodes)} episodes)")
+
+        for episode in podcast.episodes:
+            self.load_turns_for_episode(episode)
+
+        logger.info(f"✓ Loaded turns for all episodes in podcast: {podcast.title}")
+
+    def preload_turns_for_episodes(self, episodes: List[Episode]) -> None:
+        """
+        Preload turn data for a list of episodes.
+
+        Args:
+            episodes: List of episodes to load turns for
+        """
+        logger.info(f"Preloading turns for {len(episodes)} episodes...")
+
+        # Use efficient indexed loading if available
+        if self._local_mode and self._index_built:
+            episode_urls = [ep.mp3_url for ep in episodes]
+            turns_data = self._load_turns_from_index(episode_urls)
+
+            # Load turns for each episode
+            for episode in episodes:
+                episode_turns = turns_data.get(episode.mp3_url, [])
+                if episode_turns:
+                    try:
+                        episode.load_turns(episode_turns)
+                    except ValueError as e:
+                        if "End time must be after start time" in str(e) or "Text cannot be empty" in str(e):
+                            logger.debug(f"Skipping episode {episode.title} due to invalid turn data: {e}")
+                            # Try to load turns with filtering
+                            try:
+                                valid_turns = []
+                                for turn in episode_turns:
+                                    start_time = self._safe_float(turn.get('startTime', 0))
+                                    end_time = self._safe_float(turn.get('endTime', 0))
+                                    text = self._safe_string(turn.get('turnText', ''))
+                                    if end_time > start_time and text.strip():
+                                        valid_turns.append(turn)
+                                episode.load_turns(valid_turns)
+                                logger.debug(f"Successfully loaded {len(valid_turns)} valid turns for episode {episode.title}")
+                            except Exception as e2:
+                                logger.debug(f"Failed to load even filtered turns for episode {episode.title}: {e2}")
+                        else:
+                            raise e
+        else:
+            # Fall back to individual loading
+            for episode in episodes:
+                self.load_turns_for_episode(episode)
+
+        logger.info(f"✓ Preloaded turns for {len(episodes)} episodes")
+
+    def _build_turn_index(self) -> None:
+        """
+        Build an index mapping episode URLs to file offsets in the turn data file.
+        This allows efficient random access to turns for specific episodes.
+        """
+        if self._index_built:
+            return
+
+        if not self._local_mode:
+            logger.warning("Turn indexing is only available for local files")
+            return
+
+        # Find the turn data file
+        turn_file_path = None
+        if hasattr(self, '_dataset') and hasattr(self._dataset, 'file_paths'):
+            for file_type, file_path in self._dataset.file_paths.items():
+                if 'speaker' in file_type.lower() or 'turn' in file_type.lower():
+                    turn_file_path = file_path
+                    break
+
+        if not turn_file_path:
+            logger.warning("No speaker turn data file found for indexing")
+            return
+
+        self._turn_file_path = turn_file_path
+
+        # Check if index file already exists
+        index_file_path = turn_file_path + '.index'
+        if os.path.exists(index_file_path):
+            logger.info(f"Loading existing turn index from {index_file_path}")
+            try:
+                with open(index_file_path, 'rb') as f:
+                    self._turn_index = pickle.load(f)
+                self._index_built = True
+                logger.info(f"✓ Loaded index for {len(self._turn_index)} episodes")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load existing index: {e}")
+
+        # Build the index
+        logger.info(f"Building turn index for {turn_file_path}...")
+        start_time = time.time()
+
+        self._turn_index = {}
+        record_count = 0
+
+        try:
+            with gzip.open(turn_file_path, 'rt', encoding='utf-8') as f:
+                tqdm_bar = tqdm(desc="Building turn index", disable=not self.show_progress)
+
+                for line in f:
+                    try:
+                        # Get current file position
+                        offset = f.tell()
+
+                        # Parse the record
+                        record = json.loads(line.strip())
+                        record_count += 1
+
+                        # Only process speaker turn records
+                        if 'turnText' in record or 'speaker' in record:
+                            mp3_url = self._safe_string(record.get('mp3url'))
+                            if mp3_url:
+                                if mp3_url not in self._turn_index:
+                                    self._turn_index[mp3_url] = []
+                                self._turn_index[mp3_url].append(offset)
+
+                        tqdm_bar.update(1)
+
+                        # Log progress every 100,000 records
+                        if record_count % 100000 == 0:
+                            logger.debug(f"  Indexed {record_count:,} records, {len(self._turn_index)} episodes")
+
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"Skipping invalid JSON: {e}")
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Skipping record due to error: {e}")
+                        continue
+
+                tqdm_bar.close()
+
+            # Save the index
+            try:
+                with open(index_file_path, 'wb') as f:
+                    pickle.dump(self._turn_index, f)
+                logger.info(f"✓ Saved turn index to {index_file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save turn index: {e}")
+
+            index_time = time.time() - start_time
+            logger.info(f"✓ Turn index built in {index_time:.2f} seconds")
+            logger.info(f"  Indexed {record_count:,} records for {len(self._turn_index)} episodes")
+            self._index_built = True
+
+        except Exception as e:
+            logger.error(f"Error building turn index: {e}")
+            self._index_built = False
+
+    def _load_turns_from_index(self, episode_urls: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Load turns for specific episodes using the index for efficient random access.
+
+        Args:
+            episode_urls: List of episode URLs to load turns for
+
+        Returns:
+            Dictionary mapping episode URLs to their turn data
+        """
+        if not self._index_built:
+            self._build_turn_index()
+
+        if not self._turn_file_path:
+            logger.warning("No turn file available for indexed loading")
+            return {}
+
+        logger.info(f"Loading turns for {len(episode_urls)} episodes using index...")
+        start_time = time.time()
+
+        turns_by_episode = {}
+        total_turns_loaded = 0
+
+        with gzip.open(self._turn_file_path, 'rt', encoding='utf-8') as f:
+            for episode_url in episode_urls:
+                if episode_url not in self._turn_index:
+                    logger.debug(f"No turns found for episode: {episode_url}")
+                    continue
+
+                episode_turns = []
+                offsets = self._turn_index[episode_url]
+
+                for offset in offsets:
+                    try:
+                        # Seek to the specific offset
+                        f.seek(offset)
+                        line = f.readline()
+
+                        if line:
+                            record = json.loads(line.strip())
+                            episode_turns.append(record)
+
+                    except Exception as e:
+                        logger.debug(f"Error reading turn at offset {offset}: {e}")
+                        continue
+
+                if episode_turns:
+                    turns_by_episode[episode_url] = episode_turns
+                    total_turns_loaded += len(episode_turns)
+                    logger.debug(f"Loaded {len(episode_turns)} turns for {episode_url}")
+
+        load_time = time.time() - start_time
+        logger.info(f"✓ Loaded {total_turns_loaded} turns for {len(turns_by_episode)} episodes in {load_time:.2f} seconds")
+
+        return turns_by_episode
+
+    def _load_turns_for_episode_efficient(self, episode: Episode) -> None:
+        """
+        Load turns for a single episode using the index for efficient access.
+
+        Args:
+            episode: Episode to load turns for
+        """
+        if episode._turns_loaded:
+            return
+
+        if not self._index_built:
+            self._build_turn_index()
+
+        if episode.mp3_url not in self._turn_index:
+            logger.debug(f"No turns found for episode: {episode.title}")
+            return
+
+        # Load turns for this specific episode
+        turns_data = self._load_turns_from_index([episode.mp3_url])
+        episode_turns = turns_data.get(episode.mp3_url, [])
+
+        if episode_turns:
+            try:
+                episode.load_turns(episode_turns)
+                logger.debug(f"Loaded {len(episode_turns)} turns for episode: {episode.title}")
+            except ValueError as e:
+                if "End time must be after start time" in str(e) or "Text cannot be empty" in str(e):
+                    logger.debug(f"Skipping episode {episode.title} due to invalid turn data: {e}")
+                    # Try to load turns with filtering
+                    try:
+                        valid_turns = []
+                        for turn in episode_turns:
+                            start_time = self._safe_float(turn.get('startTime', 0))
+                            end_time = self._safe_float(turn.get('endTime', 0))
+                            text = self._safe_string(turn.get('turnText', ''))
+                            if end_time > start_time and text.strip():
+                                valid_turns.append(turn)
+                        episode.load_turns(valid_turns)
+                        logger.debug(f"Successfully loaded {len(valid_turns)} valid turns for episode {episode.title}")
+                    except Exception as e2:
+                        logger.debug(f"Failed to load even filtered turns for episode {episode.title}: {e2}")
+                else:
+                    raise e
+        else:
+            logger.debug(f"No turns found for episode: {episode.title}")
+
+    def build_turn_index_async(self) -> None:
+        """
+        Build the turn index in a background thread.
+        This allows the dataset to be used while the index is being built.
+        """
+        if self._index_built:
+            return
+
+        def build_index():
+            try:
+                self._build_turn_index()
+            except Exception as e:
+                logger.error(f"Error building turn index: {e}")
+
+        # Start index building in background thread
+        thread = threading.Thread(target=build_index, daemon=True)
+        thread.start()
+        logger.info("Turn index building started in background thread")
+
+    def get_index_status(self) -> Dict[str, Any]:
+        """
+        Get the status of the turn index.
+
+        Returns:
+            Dictionary with index status information
+        """
+        return {
+            'index_built': self._index_built,
+            'episodes_indexed': len(self._turn_index),
+            'turn_file_path': self._turn_file_path,
+            'local_mode': self._local_mode
+        }
