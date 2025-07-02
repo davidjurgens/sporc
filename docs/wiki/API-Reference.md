@@ -490,6 +490,61 @@ Get comprehensive quality metrics for the episode.
 **Returns:**
 - `Dict[str, float]`: Dictionary containing quality metrics
 
+#### `sliding_window(window_size: int, overlap: int = 0, start_index: Optional[int] = None, end_index: Optional[int] = None) -> Iterator[TurnWindow]`
+
+Create sliding windows based on the number of turns.
+
+**Parameters:**
+- `window_size` (int): Number of turns in each window
+- `overlap` (int): Number of turns to overlap between consecutive windows (default: 0)
+- `start_index` (Optional[int]): Starting turn index (default: 0)
+- `end_index` (Optional[int]): Ending turn index (default: last turn)
+
+**Returns:**
+- `Iterator[TurnWindow]`: Iterator yielding TurnWindow objects
+
+**Raises:**
+- `ValueError`: If window_size <= 0, overlap < 0, or window_size <= overlap
+- `RuntimeError`: If turns are not loaded for this episode
+
+#### `sliding_window_by_time(window_duration: float, overlap_duration: float = 0.0, start_time: Optional[float] = None, end_time: Optional[float] = None) -> Iterator[TurnWindow]`
+
+Create sliding windows based on time duration.
+
+**Parameters:**
+- `window_duration` (float): Duration of each window in seconds
+- `overlap_duration` (float): Duration of overlap between consecutive windows (default: 0.0)
+- `start_time` (Optional[float]): Starting time in seconds (default: 0)
+- `end_time` (Optional[float]): Ending time in seconds (default: episode duration)
+
+**Returns:**
+- `Iterator[TurnWindow]`: Iterator yielding TurnWindow objects
+
+**Raises:**
+- `ValueError`: If window_duration <= 0, overlap_duration < 0, or window_duration <= overlap_duration
+- `RuntimeError`: If turns are not loaded for this episode
+
+#### `get_window_statistics(window_size: int, overlap: int = 0) -> Dict[str, Any]`
+
+Get statistics about sliding windows for this episode.
+
+**Parameters:**
+- `window_size` (int): Number of turns in each window
+- `overlap` (int): Number of turns to overlap between consecutive windows (default: 0)
+
+**Returns:**
+- `Dict[str, Any]`: Dictionary containing window statistics:
+  - `total_windows`: Total number of windows
+  - `step_size`: Number of turns between window starts
+  - `avg_window_duration`: Average duration of windows in seconds
+  - `total_turns`: Total number of turns in the episode
+  - `window_size`: Requested window size
+  - `overlap`: Requested overlap size
+
+**Raises:**
+- `ValueError`: If window_size <= 0, overlap < 0, or window_size <= overlap
+- `RuntimeError`: If turns are not loaded for this episode
+
 ## Turn
 
 Represents a single conversation turn in a podcast episode.
@@ -575,6 +630,111 @@ Check if the turn data is valid and complete.
 
 **Returns:**
 - `bool`: True if turn data is valid, False otherwise
+
+## TurnWindow
+
+Represents a window of conversation turns with rich metadata for sliding window analysis.
+
+### Properties
+
+#### `turns: List[Turn]`
+
+List of Turn objects in this window.
+
+#### `window_index: int`
+
+Position of this window (0-based) among all windows.
+
+#### `start_index: int`
+
+Starting turn index in the episode.
+
+#### `end_index: int`
+
+Ending turn index in the episode (exclusive).
+
+#### `total_windows: int`
+
+Total number of windows for this episode.
+
+#### `overlap_size: int`
+
+Number of overlapping turns with the previous window.
+
+#### `size: int`
+
+Number of turns in this window.
+
+#### `time_range: Tuple[float, float]`
+
+Time range of this window as (start_time, end_time) in seconds.
+
+#### `duration: float`
+
+Duration of this window in seconds.
+
+#### `is_first: bool`
+
+Whether this is the first window.
+
+#### `is_last: bool`
+
+Whether this is the last window.
+
+#### `has_overlap: bool`
+
+Whether this window has overlap with the previous window.
+
+#### `new_turns: List[Turn]`
+
+Turns that are new to this window (not overlapping with previous).
+
+#### `overlap_turns: List[Turn]`
+
+Turns that overlap with the previous window.
+
+### Methods
+
+#### `get_text() -> str`
+
+Get the combined text of all turns in this window.
+
+**Returns:**
+- `str`: Combined text of all turns
+
+#### `get_speaker_distribution() -> Dict[str, int]`
+
+Get the distribution of speakers in this window.
+
+**Returns:**
+- `Dict[str, int]`: Dictionary mapping speaker names to turn counts
+
+#### `get_role_distribution() -> Dict[str, int]`
+
+Get the distribution of speaker roles in this window.
+
+**Returns:**
+- `Dict[str, int]`: Dictionary mapping roles to turn counts
+
+#### `to_dict() -> Dict[str, Any]`
+
+Convert the window to a dictionary representation.
+
+**Returns:**
+- `Dict[str, Any]`: Dictionary containing window data:
+  - `window_index`: Window position
+  - `start_index`: Starting turn index
+  - `end_index`: Ending turn index
+  - `total_windows`: Total number of windows
+  - `overlap_size`: Number of overlapping turns
+  - `size`: Number of turns in window
+  - `time_range`: Time range as tuple
+  - `duration`: Window duration
+  - `is_first`: Whether first window
+  - `is_last`: Whether last window
+  - `has_overlap`: Whether has overlap
+  - `speaker_distribution`: Speaker distribution
+  - `role_distribution`: Role distribution
 
 ## TimeRangeBehavior
 

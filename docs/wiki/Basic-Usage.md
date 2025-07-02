@@ -879,6 +879,53 @@ analyze_podcast("SingOut SpeakOut", use_streaming=True)   # Streaming mode
 analyze_podcast("SingOut SpeakOut", use_selective=True, categories=['education'])  # Selective mode
 ```
 
+## Sliding Windows
+
+For analyzing large episodes in manageable chunks, you can use sliding windows:
+
+```python
+# Load dataset with lazy loading for efficiency
+sporc = SPORCDataset(load_turns_eagerly=False)
+
+# Get a podcast and load turns
+podcast = sporc.search_podcast("The Joe Rogan Experience")
+episode = podcast.episodes[0]
+sporc.load_turns_for_episode(episode)
+
+# Process episode in 10-turn windows with 2-turn overlap
+for window in episode.sliding_window(window_size=10, overlap=2):
+    print(f"Window {window.window_index + 1}/{window.total_windows}")
+    print(f"  Turns: {window.start_index}-{window.end_index} ({window.size} turns)")
+    print(f"  Time range: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  New turns: {len(window.new_turns)}")
+    print(f"  Overlap turns: {len(window.overlap_turns)}")
+
+    # Get combined text for this window
+    text = window.get_text()
+    print(f"  Preview: {text[:100]}...")
+```
+
+### Time-Based Windows
+
+```python
+# Process episode in 5-minute windows with 1-minute overlap
+for window in episode.sliding_window_by_time(
+    window_duration=300,  # 5 minutes in seconds
+    overlap_duration=60    # 1 minute overlap
+):
+    print(f"Time window: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  Duration: {window.duration/60:.1f} minutes")
+    print(f"  Turns: {window.size}")
+
+    # Analyze speaker distribution in this window
+    speaker_dist = window.get_speaker_distribution()
+    role_dist = window.get_role_distribution()
+    print(f"  Speakers: {list(speaker_dist.keys())}")
+    print(f"  Roles: {role_dist}")
+```
+
+For more detailed information about sliding windows, see the [Sliding Windows](Sliding-Windows.md) documentation.
+
 ## Next Steps
 
 Now that you understand the basics, you can:
@@ -888,5 +935,6 @@ Now that you understand the basics, you can:
 3. Check out [Categories](Categories.md) to understand how to use podcast categories
 4. Try the [Streaming Mode](Streaming-Mode.md) for memory-efficient processing
 5. Learn about [Selective Loading](Selective-Loading.md) for filtered subset processing
+6. Use [Sliding Windows](Sliding-Windows.md) for processing large episodes in chunks
 
 Note: In streaming mode, `len(sporc)` returns 1,134,058 (the total number of episodes) unless a subset has been loaded, in which case it returns the size of the subset.

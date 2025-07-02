@@ -2,7 +2,7 @@
 Episode class for representing podcast episodes.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Iterator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -23,6 +23,120 @@ class TimeRangeBehavior(Enum):
     STRICT = "strict"
     INCLUDE_PARTIAL = "include_partial"
     INCLUDE_FULL_TURNS = "include_full_turns"
+
+
+class TurnWindow:
+    """
+    Represents a window of turns with metadata about the window.
+    """
+
+    def __init__(self, turns: List[Turn], window_index: int, start_index: int, end_index: int,
+                 total_windows: int, overlap_size: int = 0):
+        self.turns = turns
+        self.window_index = window_index
+        self.start_index = start_index
+        self.end_index = end_index
+        self.total_windows = total_windows
+        self.overlap_size = overlap_size
+
+    @property
+    def size(self) -> int:
+        """Get the number of turns in this window."""
+        return len(self.turns)
+
+    @property
+    def is_first(self) -> bool:
+        """Check if this is the first window."""
+        return self.window_index == 0
+
+    @property
+    def is_last(self) -> bool:
+        """Check if this is the last window."""
+        return self.window_index == self.total_windows - 1
+
+    @property
+    def has_overlap(self) -> bool:
+        """Check if this window has overlap with the previous window."""
+        return self.overlap_size > 0
+
+    @property
+    def overlap_turns(self) -> List[Turn]:
+        """Get the turns that overlap with the previous window (if any)."""
+        if self.overlap_size > 0 and not self.is_first:
+            return self.turns[:self.overlap_size]
+        return []
+
+    @property
+    def new_turns(self) -> List[Turn]:
+        """Get the turns that are new in this window (not overlapping)."""
+        if self.overlap_size > 0 and not self.is_first:
+            return self.turns[self.overlap_size:]
+        return self.turns
+
+    @property
+    def time_range(self) -> Tuple[float, float]:
+        """Get the time range covered by this window."""
+        if not self.turns:
+            return (0.0, 0.0)
+        return (self.turns[0].start_time, self.turns[-1].end_time)
+
+    @property
+    def duration(self) -> float:
+        """Get the total duration of this window."""
+        if not self.turns:
+            return 0.0
+        return self.turns[-1].end_time - self.turns[0].start_time
+
+    def get_speaker_distribution(self) -> Dict[str, int]:
+        """Get the distribution of speakers in this window."""
+        speaker_counts = {}
+        for turn in self.turns:
+            for speaker in turn.speaker:
+                speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
+        return speaker_counts
+
+    def get_role_distribution(self) -> Dict[str, int]:
+        """Get the distribution of speaker roles in this window."""
+        role_counts = {}
+        for turn in self.turns:
+            role = turn.inferred_speaker_role or "unknown"
+            role_counts[role] = role_counts.get(role, 0) + 1
+        return role_counts
+
+    def get_text(self, separator: str = " ") -> str:
+        """Get the combined text of all turns in this window."""
+        return separator.join(turn.text for turn in self.turns)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the window to a dictionary representation."""
+        return {
+            'window_index': self.window_index,
+            'start_index': self.start_index,
+            'end_index': self.end_index,
+            'total_windows': self.total_windows,
+            'overlap_size': self.overlap_size,
+            'size': self.size,
+            'is_first': self.is_first,
+            'is_last': self.is_last,
+            'has_overlap': self.has_overlap,
+            'time_range': self.time_range,
+            'duration': self.duration,
+            'speaker_distribution': self.get_speaker_distribution(),
+            'role_distribution': self.get_role_distribution(),
+            'num_turns': len(self.turns),
+            'num_overlap_turns': len(self.overlap_turns),
+            'num_new_turns': len(self.new_turns),
+        }
+
+    def __str__(self) -> str:
+        """String representation of the window."""
+        return f"TurnWindow(index={self.window_index}, turns={self.size}, time={self.time_range[0]:.1f}-{self.time_range[1]:.1f}s)"
+
+    def __repr__(self) -> str:
+        """Detailed string representation of the window."""
+        return (f"TurnWindow(turns={self.size}, window_index={self.window_index}, "
+                f"start_index={self.start_index}, end_index={self.end_index}, "
+                f"overlap_size={self.overlap_size})")
 
 
 @dataclass
@@ -382,6 +496,218 @@ class Episode:
     def get_guest_turns(self) -> List[Turn]:
         """Get all turns by guests."""
         return self.get_turns_by_role("guest")
+
+    def sliding_window(self, window_size: int, overlap: int = 0,
+                      start_index: Optional[int] = None, end_index: Optional[int] = None) -> Iterator[TurnWindow]:
+        """
+        Create a sliding window iterator over turns.
+
+        Args:
+            window_size: Number of turns in each window
+            overlap: Number of turns to overlap between consecutive windows
+            start_index: Starting turn index (default: 0)
+            end_index: Ending turn index (default: last turn)
+
+        Yields:
+            TurnWindow objects containing the turns for each window
+
+        Raises:
+            RuntimeError: If turns are not loaded
+            ValueError: If window_size is less than or equal to overlap
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+
+        if window_size <= overlap:
+            raise ValueError("Window size must be greater than overlap")
+
+        if window_size <= 0:
+            raise ValueError("Window size must be positive")
+
+        if overlap < 0:
+            raise ValueError("Overlap must be non-negative")
+
+        # Set default start and end indices
+        if start_index is None:
+            start_index = 0
+        if end_index is None:
+            end_index = len(self._turns)
+
+        # Validate indices
+        if start_index < 0 or start_index >= len(self._turns):
+            raise ValueError(f"Start index {start_index} is out of range")
+        if end_index > len(self._turns) or end_index <= start_index:
+            raise ValueError(f"End index {end_index} is invalid")
+
+        # Calculate step size (how many new turns to add in each window)
+        step_size = window_size - overlap
+
+        # Calculate total number of windows
+        total_turns = end_index - start_index
+        if total_turns <= 0:
+            return
+
+        # Calculate how many complete windows we can fit
+        if total_turns <= window_size:
+            total_windows = 1
+        else:
+            total_windows = (total_turns - window_size) // step_size + 1
+
+        # Generate windows
+        for window_index in range(total_windows):
+            window_start = start_index + window_index * step_size
+            window_end = min(window_start + window_size, end_index)
+
+            # Get turns for this window
+            window_turns = self._turns[window_start:window_end]
+
+            # Create TurnWindow object
+            window = TurnWindow(
+                turns=window_turns,
+                window_index=window_index,
+                start_index=window_start,
+                end_index=window_end,
+                total_windows=total_windows,
+                overlap_size=overlap if window_index > 0 else 0
+            )
+
+            yield window
+
+    def sliding_window_by_time(self, window_duration: float, overlap_duration: float = 0.0,
+                              start_time: Optional[float] = None, end_time: Optional[float] = None) -> Iterator[TurnWindow]:
+        """
+        Create a sliding window iterator over turns based on time duration.
+
+        Args:
+            window_duration: Duration of each window in seconds
+            overlap_duration: Duration of overlap between consecutive windows in seconds
+            start_time: Starting time in seconds (default: 0)
+            end_time: Ending time in seconds (default: episode duration)
+
+        Yields:
+            TurnWindow objects containing the turns for each time window
+
+        Raises:
+            RuntimeError: If turns are not loaded
+            ValueError: If window_duration is less than or equal to overlap_duration
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+
+        if window_duration <= overlap_duration:
+            raise ValueError("Window duration must be greater than overlap duration")
+
+        if window_duration <= 0:
+            raise ValueError("Window duration must be positive")
+
+        if overlap_duration < 0:
+            raise ValueError("Overlap duration must be non-negative")
+
+        # Set default start and end times
+        if start_time is None:
+            start_time = 0.0
+        if end_time is None:
+            end_time = self.duration_seconds
+
+        # Validate times
+        if start_time < 0 or start_time >= self.duration_seconds:
+            raise ValueError(f"Start time {start_time} is out of range")
+        if end_time > self.duration_seconds or end_time <= start_time:
+            raise ValueError(f"End time {end_time} is invalid")
+
+        # Calculate step size (how much time to advance in each window)
+        step_size = window_duration - overlap_duration
+
+        # Calculate total number of windows
+        total_duration = end_time - start_time
+        if total_duration <= 0:
+            return
+
+        total_windows = max(1, int((total_duration - window_duration) / step_size) + 1)
+
+        # Generate windows
+        for window_index in range(total_windows):
+            window_start_time = start_time + window_index * step_size
+            window_end_time = min(window_start_time + window_duration, end_time)
+
+            # Find turns that fall within this time window
+            window_turns = []
+            for turn in self._turns:
+                # Include turns that overlap with the time window
+                if (turn.start_time < window_end_time and turn.end_time > window_start_time):
+                    window_turns.append(turn)
+
+            # Find the actual start and end indices for this window
+            if window_turns:
+                # Find the first turn that starts within or before the window
+                start_idx = None
+                for i, turn in enumerate(self._turns):
+                    if turn.start_time >= window_start_time:
+                        start_idx = i
+                        break
+                if start_idx is None:
+                    start_idx = len(self._turns) - 1
+
+                # Find the last turn that ends within or after the window
+                end_idx = None
+                for i in range(len(self._turns) - 1, -1, -1):
+                    if self._turns[i].end_time <= window_end_time:
+                        end_idx = i + 1
+                        break
+                if end_idx is None:
+                    end_idx = len(self._turns)
+            else:
+                start_idx = end_idx = 0
+
+            # Create TurnWindow object
+            window = TurnWindow(
+                turns=window_turns,
+                window_index=window_index,
+                start_index=start_idx,
+                end_index=end_idx,
+                total_windows=total_windows,
+                overlap_size=0  # Time-based windows don't track turn overlap directly
+            )
+
+            yield window
+
+    def get_window_statistics(self, window_size: int, overlap: int = 0) -> Dict[str, Any]:
+        """
+        Get statistics about sliding windows for this episode.
+
+        Args:
+            window_size: Number of turns in each window
+            overlap: Number of turns to overlap between consecutive windows
+
+        Returns:
+            Dictionary with window statistics
+        """
+        if not self._turns_loaded:
+            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+
+        if window_size <= overlap:
+            raise ValueError("Window size must be greater than overlap")
+
+        # Calculate statistics
+        total_turns = len(self._turns)
+        step_size = window_size - overlap
+        total_windows = max(1, (total_turns - window_size) // step_size + 1)
+
+        # Calculate average window duration
+        total_duration = sum(turn.duration for turn in self._turns)
+        avg_turn_duration = total_duration / total_turns if total_turns > 0 else 0
+        avg_window_duration = avg_turn_duration * window_size
+
+        return {
+            'total_turns': total_turns,
+            'window_size': window_size,
+            'overlap': overlap,
+            'step_size': step_size,
+            'total_windows': total_windows,
+            'avg_window_duration': avg_window_duration,
+            'total_duration': total_duration,
+            'avg_turn_duration': avg_turn_duration,
+        }
 
     @property
     def turns(self) -> List[Turn]:

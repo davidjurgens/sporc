@@ -579,26 +579,262 @@ for speaker, data in stats['speaker_participation'].items():
     print(f"  {speaker}: {data['turn_count']} turns, {data['total_duration']:.1f}s ({percentage:.1f}%)")
 ```
 
-## Error Handling
+## Sliding Window Methods
+
+The Episode class provides powerful sliding window functionality for processing large episodes in manageable chunks with configurable overlap. This is essential for analyzing long conversations while maintaining context.
+
+### Turn-Based Sliding Windows
+
+#### `sliding_window(window_size: int, overlap: int = 0, start_index: Optional[int] = None, end_index: Optional[int] = None) -> Iterator[TurnWindow]`
+
+Create sliding windows based on the number of turns.
 
 ```python
-from sporc import SPORCError
+# Create sliding windows with 10 turns each and 2 turns overlap
+for window in episode.sliding_window(window_size=10, overlap=2):
+    print(f"Window {window.window_index + 1}/{window.total_windows}")
+    print(f"  Turns: {window.start_index}-{window.end_index} ({window.size} turns)")
+    print(f"  Time range: {window.time_range[0]:.1f}s - {window.time_range[1]:.1f}s")
+    print(f"  New turns: {len(window.new_turns)}")
+    print(f"  Overlap turns: {len(window.overlap_turns)}")
 
-try:
-    # Work with episode
-    turns = episode.get_all_turns()
-    print(f"Found {len(turns)} turns")
-except SPORCError as e:
-    print(f"Error: {e}")
-except AttributeError as e:
-    print(f"Episode data incomplete: {e}")
+    # Get combined text for this window
+    text = window.get_text()
+    print(f"  Preview: {text[:100]}...")
 ```
 
-## Performance Considerations
+**Parameters:**
+- `window_size` (int): Number of turns in each window
+- `overlap` (int): Number of turns to overlap between consecutive windows (default: 0)
+- `start_index` (Optional[int]): Starting turn index (default: 0)
+- `end_index` (Optional[int]): Ending turn index (default: last turn)
 
-1. **Turn access** is O(n) where n is the number of turns
-2. **Time-based queries** are efficient with indexed data
-3. **Speaker-based queries** may require full iteration
-4. **Large episodes** with many turns may require significant memory
-5. **Transcript access** loads the full text into memory
-6. **Use filtering** to work with subsets when appropriate
+**Returns:**
+- `Iterator[TurnWindow]`: Iterator yielding TurnWindow objects
+
+### Time-Based Sliding Windows
+
+#### `sliding_window_by_time(window_duration: float, overlap_duration: float = 0.0, start_time: Optional[float] = None, end_time: Optional[float] = None) -> Iterator[TurnWindow]`
+
+Create sliding windows based on time duration.
+
+```python
+# Create 5-minute windows with 1-minute overlap
+for window in episode.sliding_window_by_time(
+    window_duration=300,  # 5 minutes in seconds
+    overlap_duration=60    # 1 minute overlap
+):
+    print(f"Time window: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  Duration: {window.duration/60:.1f} minutes")
+    print(f"  Turns: {window.size}")
+
+    # Analyze speaker distribution in this window
+    speaker_dist = window.get_speaker_distribution()
+    role_dist = window.get_role_distribution()
+    print(f"  Speakers: {list(speaker_dist.keys())}")
+    print(f"  Roles: {role_dist}")
+```
+
+**Parameters:**
+- `window_duration` (float): Duration of each window in seconds
+- `overlap_duration` (float): Duration of overlap between consecutive windows (default: 0.0)
+- `start_time` (Optional[float]): Starting time in seconds (default: 0)
+- `end_time` (Optional[float]): Ending time in seconds (default: episode duration)
+
+**Returns:**
+- `Iterator[TurnWindow]`: Iterator yielding TurnWindow objects
+
+### Window Statistics
+
+#### `get_window_statistics(window_size: int, overlap: int = 0) -> Dict[str, Any]`
+
+Get statistics about sliding windows for this episode.
+
+```python
+# Get statistics for different window configurations
+configs = [
+    (10, 0),   # No overlap
+    (10, 2),   # Small overlap
+    (10, 5),   # Medium overlap
+    (20, 5),   # Larger windows
+]
+
+for window_size, overlap in configs:
+    stats = episode.get_window_statistics(window_size, overlap)
+    print(f"Window size: {window_size}, Overlap: {overlap}")
+    print(f"  Total windows: {stats['total_windows']}")
+    print(f"  Step size: {stats['step_size']}")
+    print(f"  Avg window duration: {stats['avg_window_duration']:.1f}s")
+```
+
+**Parameters:**
+- `window_size` (int): Number of turns in each window
+- `overlap` (int): Number of turns to overlap between consecutive windows (default: 0)
+
+**Returns:**
+- `Dict[str, Any]`: Dictionary with window statistics
+
+### TurnWindow Class
+
+The `TurnWindow` class represents a window of conversation turns with rich metadata:
+
+```python
+from sporc.episode import TurnWindow
+
+# Basic properties
+window = episode.sliding_window(10, 2).__next__()
+print(f"Size: {window.size} turns")
+print(f"Time range: {window.time_range[0]:.1f}s - {window.time_range[1]:.1f}s")
+print(f"Duration: {window.duration:.1f}s")
+
+# Position information
+print(f"Is first: {window.is_first}")
+print(f"Is last: {window.is_last}")
+print(f"Has overlap: {window.has_overlap}")
+
+# Turn analysis
+print(f"New turns: {len(window.new_turns)}")
+print(f"Overlap turns: {len(window.overlap_turns)}")
+
+# Speaker and role analysis
+speaker_dist = window.get_speaker_distribution()
+role_dist = window.get_role_distribution()
+print(f"Speakers: {list(speaker_dist.keys())}")
+print(f"Roles: {role_dist}")
+
+# Text access
+text = window.get_text()
+print(f"Combined text: {text[:100]}...")
+
+# Dictionary representation
+window_dict = window.to_dict()
+print(f"Window data: {window_dict}")
+```
+
+### Advanced Sliding Window Patterns
+
+#### Context-Aware Processing
+
+```python
+# Use high overlap to maintain conversation context
+for window in episode.sliding_window(window_size=15, overlap=10):
+    if window.has_overlap:
+        print(f"Window {window.window_index + 1} has {len(window.overlap_turns)} overlap turns")
+
+        # Show context from previous window
+        print("Context from previous window:")
+        for turn in window.overlap_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+
+        # Show new content
+        print("New content:")
+        for turn in window.new_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+```
+
+#### Conversation Flow Analysis
+
+```python
+# Analyze conversation patterns over time
+for window in episode.sliding_window_by_time(120, 30):  # 2min windows, 30s overlap
+    # Calculate conversation metrics
+    total_words = sum(turn.word_count for turn in window.turns)
+    avg_words_per_turn = total_words / len(window.turns) if window.turns else 0
+    conversation_density = len(window.turns) / (window.duration/60)  # turns per minute
+
+    print(f"Window {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min:")
+    print(f"  Words: {total_words}, Avg per turn: {avg_words_per_turn:.1f}")
+    print(f"  Density: {conversation_density:.1f} turns/min")
+    print(f"  Speakers: {len(window.get_speaker_distribution())}")
+```
+
+#### Topic Segmentation
+
+```python
+def analyze_topic_segments(episode, segment_duration=300):
+    """Analyze conversation in fixed-duration segments."""
+    segments = []
+
+    for window in episode.sliding_window_by_time(segment_duration, 0):
+        segment_data = {
+            'time_range': window.time_range,
+            'total_words': sum(turn.word_count for turn in window.turns),
+            'speaker_distribution': window.get_speaker_distribution(),
+            'role_distribution': window.get_role_distribution(),
+            'conversation_density': len(window.turns) / (window.duration/60)
+        }
+        segments.append(segment_data)
+
+    return segments
+
+# Use the function
+segments = analyze_topic_segments(episode)
+for i, segment in enumerate(segments):
+    print(f"Segment {i+1}: {segment['total_words']} words, {segment['conversation_density']:.1f} turns/min")
+```
+
+#### Speaker Interaction Analysis
+
+```python
+def analyze_speaker_interactions(episode, window_size=20):
+    """Analyze how speakers interact in conversation windows."""
+    interactions = []
+
+    for window in episode.sliding_window(window_size, 5):
+        # Count speaker transitions
+        transitions = {}
+        for i in range(len(window.turns) - 1):
+            current_speaker = window.turns[i].inferred_speaker_name
+            next_speaker = window.turns[i + 1].inferred_speaker_name
+            key = (current_speaker, next_speaker)
+            transitions[key] = transitions.get(key, 0) + 1
+
+        interaction_data = {
+            'window_index': window.window_index,
+            'time_range': window.time_range,
+            'transitions': transitions,
+            'speaker_distribution': window.get_speaker_distribution()
+        }
+        interactions.append(interaction_data)
+
+    return interactions
+
+# Use the function
+interactions = analyze_speaker_interactions(episode)
+for interaction in interactions[:3]:  # Show first 3 windows
+    print(f"Window {interaction['window_index'] + 1}:")
+    print(f"  Speaker transitions: {interaction['transitions']}")
+```
+
+### Error Handling
+
+```python
+try:
+    # Invalid parameters will raise ValueError
+    for window in episode.sliding_window(window_size=0, overlap=0):
+        pass
+except ValueError as e:
+    print(f"Invalid parameters: {e}")
+
+try:
+    # Turns must be loaded first
+    episode_without_turns = Episode(...)
+    for window in episode_without_turns.sliding_window(5, 1):
+        pass
+except RuntimeError as e:
+    print(f"Turns not loaded: {e}")
+```
+
+### Performance Considerations
+
+1. **Window Size**: Larger windows reduce total processing time but increase memory usage
+2. **Overlap**: Higher overlap improves context preservation but increases processing time
+3. **Time vs Turn-Based**: Choose based on analysis goals
+   - Turn-based: Consistent processing, good for conversation flow
+   - Time-based: Variable processing, good for temporal analysis
+4. **Memory Usage**: Use lazy loading for large datasets
+5. **Parameter Validation**: Ensure window_size > overlap and all parameters are positive
+
+For more detailed information about sliding windows, see the [Sliding Windows](Sliding-Windows.md) documentation.

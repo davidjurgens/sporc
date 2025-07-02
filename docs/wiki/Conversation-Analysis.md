@@ -197,6 +197,110 @@ for i, segment in enumerate(segments[:5]):
 
 ### Conversation Patterns Over Time
 
+### Sliding Window Analysis
+
+For analyzing large episodes or maintaining conversation context, you can use sliding windows to process conversations in manageable chunks:
+
+```python
+# Analyze conversation patterns using sliding windows
+for window in episode.sliding_window(window_size=20, overlap=5):
+    print(f"Window {window.window_index + 1}/{window.total_windows}")
+    print(f"  Time range: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  Turns: {window.size}")
+
+    # Analyze speaker distribution in this window
+    speaker_dist = window.get_speaker_distribution()
+    role_dist = window.get_role_distribution()
+    print(f"  Speakers: {list(speaker_dist.keys())}")
+    print(f"  Roles: {role_dist}")
+
+    # Calculate conversation metrics
+    total_words = sum(turn.word_count for turn in window.turns)
+    conversation_density = len(window.turns) / (window.duration/60)  # turns per minute
+    print(f"  Words: {total_words}, Density: {conversation_density:.1f} turns/min")
+```
+
+#### Context-Aware Analysis
+
+Use high overlap to maintain conversation context across windows:
+
+```python
+# Use high overlap to maintain conversation context
+for window in episode.sliding_window(window_size=15, overlap=10):
+    if window.has_overlap:
+        print(f"Window {window.window_index + 1} has {len(window.overlap_turns)} overlap turns")
+
+        # Show context from previous window
+        print("Context from previous window:")
+        for turn in window.overlap_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+
+        # Show new content
+        print("New content:")
+        for turn in window.new_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+```
+
+#### Time-Based Windows
+
+For temporal analysis, use time-based sliding windows:
+
+```python
+# Analyze conversation in 5-minute segments
+for window in episode.sliding_window_by_time(
+    window_duration=300,  # 5 minutes
+    overlap_duration=60    # 1 minute overlap
+):
+    # Calculate conversation metrics for this time period
+    total_words = sum(turn.word_count for turn in window.turns)
+    avg_words_per_turn = total_words / len(window.turns) if window.turns else 0
+    conversation_density = len(window.turns) / (window.duration/60)
+
+    print(f"Time window: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  Words: {total_words}, Avg per turn: {avg_words_per_turn:.1f}")
+    print(f"  Density: {conversation_density:.1f} turns/min")
+    print(f"  Speakers: {len(window.get_speaker_distribution())}")
+```
+
+#### Speaker Interaction Analysis with Windows
+
+Analyze how speakers interact within conversation windows:
+
+```python
+def analyze_speaker_interactions(episode, window_size=20):
+    """Analyze how speakers interact in conversation windows."""
+    interactions = []
+
+    for window in episode.sliding_window(window_size, 5):
+        # Count speaker transitions
+        transitions = {}
+        for i in range(len(window.turns) - 1):
+            current_speaker = window.turns[i].inferred_speaker_name
+            next_speaker = window.turns[i + 1].inferred_speaker_name
+            key = (current_speaker, next_speaker)
+            transitions[key] = transitions.get(key, 0) + 1
+
+        interaction_data = {
+            'window_index': window.window_index,
+            'time_range': window.time_range,
+            'transitions': transitions,
+            'speaker_distribution': window.get_speaker_distribution()
+        }
+        interactions.append(interaction_data)
+
+    return interactions
+
+# Use the function
+interactions = analyze_speaker_interactions(episode)
+for interaction in interactions[:3]:  # Show first 3 windows
+    print(f"Window {interaction['window_index'] + 1}:")
+    print(f"  Speaker transitions: {interaction['transitions']}")
+```
+
+For more detailed information about sliding windows, see the [Sliding Windows](Sliding-Windows.md) documentation.
+
 ```python
 # Analyze conversation patterns in different time periods
 early_turns = episode.get_turns_by_time_range(0, 300)  # First 5 minutes
@@ -581,3 +685,175 @@ for speaker, data in analysis['speaker_participation'].items():
 4. **Use streaming mode** for large episodes
 5. **Filter turns early** to reduce processing time
 6. **Use appropriate data structures** for your analysis needs
+
+## Sliding Window Analysis
+
+The SPORC dataset provides powerful sliding window functionality for analyzing conversations in manageable chunks with configurable overlap.
+
+### Basic Sliding Windows
+
+```python
+# Create sliding windows with 10 turns each and 2 turns overlap
+for window in episode.sliding_window(window_size=10, overlap=2):
+    print(f"Window {window.window_index + 1}/{window.total_windows}")
+    print(f"  Turns: {window.start_index}-{window.end_index} ({window.size} turns)")
+    print(f"  Time range: {window.time_range[0]:.1f}s - {window.time_range[1]:.1f}s")
+    print(f"  New turns: {len(window.new_turns)}")
+    print(f"  Overlap turns: {len(window.overlap_turns)}")
+
+    # Get combined text for this window
+    text = window.get_text()
+    print(f"  Preview: {text[:100]}...")
+```
+
+### Time-Based Sliding Windows
+
+```python
+# Create 5-minute windows with 1-minute overlap
+for window in episode.sliding_window_by_time(
+    window_duration=300,  # 5 minutes
+    overlap_duration=60    # 1 minute overlap
+):
+    print(f"Time window: {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min")
+    print(f"  Duration: {window.duration/60:.1f} minutes")
+    print(f"  Turns: {window.size}")
+
+    # Analyze speaker distribution in this window
+    speaker_dist = window.get_speaker_distribution()
+    role_dist = window.get_role_distribution()
+    print(f"  Speakers: {list(speaker_dist.keys())}")
+    print(f"  Roles: {role_dist}")
+```
+
+### Context-Aware Processing
+
+```python
+# Use high overlap to maintain conversation context
+for window in episode.sliding_window(window_size=15, overlap=10):
+    if window.has_overlap:
+        print(f"Window {window.window_index + 1} has {len(window.overlap_turns)} overlap turns")
+
+        # Show context from previous window
+        print("Context from previous window:")
+        for turn in window.overlap_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+
+        # Show new content
+        print("New content:")
+        for turn in window.new_turns[:3]:
+            speaker = turn.inferred_speaker_name or turn.speaker[0]
+            print(f"  {speaker}: {turn.text[:50]}...")
+```
+
+### Window Statistics
+
+```python
+# Get statistics for different window configurations
+configs = [
+    (10, 0),   # No overlap
+    (10, 2),   # Small overlap
+    (10, 5),   # Medium overlap
+    (20, 5),   # Larger windows
+]
+
+for window_size, overlap in configs:
+    stats = episode.get_window_statistics(window_size, overlap)
+    print(f"Window size: {window_size}, Overlap: {overlap}")
+    print(f"  Total windows: {stats['total_windows']}")
+    print(f"  Step size: {stats['step_size']}")
+    print(f"  Avg window duration: {stats['avg_window_duration']:.1f}s")
+```
+
+### Conversation Flow Analysis
+
+```python
+# Analyze conversation patterns over time
+for window in episode.sliding_window_by_time(120, 30):  # 2min windows, 30s overlap
+    # Calculate conversation metrics
+    total_words = sum(turn.word_count for turn in window.turns)
+    avg_words_per_turn = total_words / len(window.turns) if window.turns else 0
+    conversation_density = len(window.turns) / (window.duration/60)  # turns per minute
+
+    print(f"Window {window.time_range[0]/60:.1f}-{window.time_range[1]/60:.1f}min:")
+    print(f"  Words: {total_words}, Avg per turn: {avg_words_per_turn:.1f}")
+    print(f"  Density: {conversation_density:.1f} turns/min")
+    print(f"  Speakers: {len(window.get_speaker_distribution())}")
+```
+
+## Advanced Analysis Patterns
+
+### Conversation Topic Detection
+
+```python
+# Analyze conversation segments for topic changes
+def analyze_topic_segments(episode, segment_duration=300):
+    """Analyze conversation in fixed-duration segments."""
+    segments = []
+
+    for window in episode.sliding_window_by_time(segment_duration, 0):
+        segment_data = {
+            'time_range': window.time_range,
+            'total_words': sum(turn.word_count for turn in window.turns),
+            'speaker_distribution': window.get_speaker_distribution(),
+            'role_distribution': window.get_role_distribution(),
+            'conversation_density': len(window.turns) / (window.duration/60)
+        }
+        segments.append(segment_data)
+
+    return segments
+
+# Use the function
+segments = analyze_topic_segments(episode)
+for i, segment in enumerate(segments):
+    print(f"Segment {i+1}: {segment['total_words']} words, {segment['conversation_density']:.1f} turns/min")
+```
+
+### Speaker Interaction Analysis
+
+```python
+def analyze_speaker_interactions(episode, window_size=20):
+    """Analyze how speakers interact in conversation windows."""
+    interactions = []
+
+    for window in episode.sliding_window(window_size, 5):
+        # Count speaker transitions
+        transitions = {}
+        for i in range(len(window.turns) - 1):
+            current_speaker = window.turns[i].inferred_speaker_name
+            next_speaker = window.turns[i + 1].inferred_speaker_name
+            key = (current_speaker, next_speaker)
+            transitions[key] = transitions.get(key, 0) + 1
+
+        interaction_data = {
+            'window_index': window.window_index,
+            'time_range': window.time_range,
+            'transitions': transitions,
+            'speaker_distribution': window.get_speaker_distribution()
+        }
+        interactions.append(interaction_data)
+
+    return interactions
+
+# Use the function
+interactions = analyze_speaker_interactions(episode)
+for interaction in interactions[:3]:  # Show first 3 windows
+    print(f"Window {interaction['window_index'] + 1}:")
+    print(f"  Speaker transitions: {interaction['transitions']}")
+```
+
+## Best Practices
+
+1. **Use Lazy Loading**: Enable lazy loading for large datasets to manage memory efficiently
+2. **Choose Appropriate Window Sizes**: Balance between context preservation and processing efficiency
+3. **Consider Overlap**: Use overlap to maintain conversation context across windows
+4. **Time vs Turn-Based Windows**: Use time-based windows for temporal analysis, turn-based for conversation flow
+5. **Validate Window Parameters**: Ensure window size > overlap and all parameters are positive
+
+## Use Cases
+
+- **Content Analysis**: Analyze conversation topics and themes in segments
+- **Speaker Analysis**: Study speaker patterns and interactions
+- **Temporal Analysis**: Understand how conversations evolve over time
+- **Context Preservation**: Maintain conversation context for NLP processing
+- **Batch Processing**: Process large episodes in manageable chunks

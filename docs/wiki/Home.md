@@ -29,6 +29,7 @@ for episode in podcast.episodes:
 - **Easy Dataset Access**: Simple interface to load and work with the SPORC dataset
 - **Rich Search Capabilities**: Search podcasts and episodes by various criteria
 - **Conversation Analysis**: Analyze conversation turns, speaker interactions, and content patterns
+- **Sliding Windows**: Process large episodes in manageable chunks with configurable overlap
 - **Data Quality Assessment**: Built-in tools to assess diarization quality
 - **Comprehensive Metadata**: Access to episode metadata, speaker information, and audio features
 
@@ -61,9 +62,11 @@ pip install sporc
 
 ## Advanced Topics
 
+- **[Sliding Windows](Sliding-Windows.md)**: Process large episodes in manageable chunks
 - **[Categories](Categories.md)**: Understanding and using podcast categories
 - **[Streaming Mode](Streaming-Mode.md)**: Memory-efficient processing
 - **[Selective Loading](Selective-Loading.md)**: Filtered subset processing
+- **[Lazy Loading](Lazy-Loading.md)**: Efficient turn data loading
 
 ## Reference
 
