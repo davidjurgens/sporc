@@ -36,6 +36,7 @@ setup(
         "numpy>=1.21.0",
         "requests>=2.25.0",
         "tqdm>=4.62.0",
+        "pyarrow>=12.0.0",
     ],
     extras_require={
         "dev": [
@@ -51,6 +52,9 @@ setup(
         ],
         "streaming": [
             "psutil>=5.8.0",  # For memory monitoring in streaming examples
+        ],
+        "duckdb": [
+            "duckdb>=0.9.0",
         ],
     },
     keywords="podcast, audio, nlp, research, dataset, huggingface, streaming",

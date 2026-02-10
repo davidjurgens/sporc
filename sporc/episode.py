@@ -2,9 +2,10 @@
 Episode class for representing podcast episodes.
 """
 
-from typing import List, Optional, Dict, Any, Iterator, Tuple
+from typing import List, Optional, Dict, Any, Callable, Iterator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
+from bisect import bisect_left, bisect_right
 import json
 from enum import Enum
 
@@ -197,6 +198,7 @@ class Episode:
     # Internal data
     _turns: List[Turn] = field(default_factory=list, repr=False)
     _turns_loaded: bool = False
+    _turn_loader: Optional[Callable] = field(default=None, repr=False)
 
     def __post_init__(self):
         """Validate episode data after initialization."""
@@ -331,6 +333,7 @@ class Episode:
         Returns:
             List of Turn objects within the time range according to the specified behavior
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -346,17 +349,10 @@ class Episode:
                 if turn.start_time >= start_time and turn.end_time <= end_time
             ]
         elif behavior == TimeRangeBehavior.INCLUDE_PARTIAL:
-            # Include turns that overlap with the time range (current behavior)
+            # Include turns that overlap with the time range
             return [
                 turn for turn in self._turns
-                if turn.overlaps_with(Turn(
-                    speaker=["dummy"],
-                    text="dummy text for overlap checking",
-                    start_time=start_time,
-                    end_time=end_time,
-                    duration=end_time - start_time,
-                    turn_count=0
-                ))
+                if turn.start_time < end_time and turn.end_time > start_time
             ]
         elif behavior == TimeRangeBehavior.INCLUDE_FULL_TURNS:
             # Include complete turns even if they extend beyond the time range
@@ -395,6 +391,7 @@ class Episode:
                 'was_trimmed': bool      # Whether the text was trimmed
             }
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -447,6 +444,7 @@ class Episode:
         Returns:
             List of Turn objects by the specified speaker
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -466,6 +464,7 @@ class Episode:
         Returns:
             List of Turn objects with at least min_length words
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -481,6 +480,7 @@ class Episode:
         Returns:
             List of Turn objects by speakers with the specified role
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -515,6 +515,7 @@ class Episode:
             RuntimeError: If turns are not loaded
             ValueError: If window_size is less than or equal to overlap
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -591,6 +592,7 @@ class Episode:
             RuntimeError: If turns are not loaded
             ValueError: If window_duration is less than or equal to overlap_duration
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -630,32 +632,29 @@ class Episode:
             window_start_time = start_time + window_index * step_size
             window_end_time = min(window_start_time + window_duration, end_time)
 
-            # Find turns that fall within this time window
+            # Use bisect for O(log n) turn lookups on sorted start_times
+            turn_starts = [t.start_time for t in self._turns]
+
+            # Find turns that overlap with the time window
+            # A turn overlaps if turn.start_time < window_end and turn.end_time > window_start
+            candidate_start = bisect_left(turn_starts, window_start_time)
+            # Back up to include turns that started before the window but may overlap
+            while candidate_start > 0 and self._turns[candidate_start - 1].end_time > window_start_time:
+                candidate_start -= 1
+
             window_turns = []
-            for turn in self._turns:
-                # Include turns that overlap with the time window
-                if (turn.start_time < window_end_time and turn.end_time > window_start_time):
+            for i in range(candidate_start, len(self._turns)):
+                turn = self._turns[i]
+                if turn.start_time >= window_end_time:
+                    break
+                if turn.end_time > window_start_time:
                     window_turns.append(turn)
 
-            # Find the actual start and end indices for this window
             if window_turns:
-                # Find the first turn that starts within or before the window
-                start_idx = None
-                for i, turn in enumerate(self._turns):
-                    if turn.start_time >= window_start_time:
-                        start_idx = i
-                        break
-                if start_idx is None:
+                start_idx = bisect_left(turn_starts, window_start_time)
+                if start_idx >= len(self._turns):
                     start_idx = len(self._turns) - 1
-
-                # Find the last turn that ends within or after the window
-                end_idx = None
-                for i in range(len(self._turns) - 1, -1, -1):
-                    if self._turns[i].end_time <= window_end_time:
-                        end_idx = i + 1
-                        break
-                if end_idx is None:
-                    end_idx = len(self._turns)
+                end_idx = bisect_right(turn_starts, window_end_time)
             else:
                 start_idx = end_idx = 0
 
@@ -682,6 +681,7 @@ class Episode:
         Returns:
             Dictionary with window statistics
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -709,6 +709,11 @@ class Episode:
             'avg_turn_duration': avg_turn_duration,
         }
 
+    def _ensure_turns_loaded(self) -> None:
+        """Load turns via the turn loader if available and not yet loaded."""
+        if not self._turns_loaded and self._turn_loader is not None:
+            self._turn_loader()
+
     @property
     def turns(self) -> List[Turn]:
         """
@@ -717,6 +722,7 @@ class Episode:
         Returns:
             List of all Turn objects for this episode
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return self._turns.copy()
@@ -729,6 +735,7 @@ class Episode:
         Returns:
             Number of turns in this episode
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return len(self._turns)
@@ -743,6 +750,8 @@ class Episode:
         """
         if self._turns_loaded:
             return len(self._turns) > 0
+        if self._turn_loader is not None:
+            return True  # Turns are available via loader
         return False
 
     def get_all_turns(self) -> List[Turn]:
@@ -752,6 +761,7 @@ class Episode:
         Returns:
             List of all Turn objects for this episode
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return self._turns.copy()
@@ -763,6 +773,7 @@ class Episode:
         Returns:
             Dictionary with turn statistics
         """
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
 
@@ -882,18 +893,21 @@ class Episode:
 
     def __len__(self) -> int:
         """Return the number of turns in this episode."""
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return len(self._turns)
 
     def __getitem__(self, index: int) -> Turn:
         """Get a turn by index."""
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return self._turns[index]
 
     def __iter__(self):
         """Iterate over turns in this episode."""
+        self._ensure_turns_loaded()
         if not self._turns_loaded:
             raise RuntimeError("Turns not loaded. Call load_turns() first.")
         return iter(self._turns)

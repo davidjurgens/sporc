@@ -31,3 +31,8 @@ class ValidationError(SPORCError):
 class ConfigurationError(SPORCError):
     """Raised when there's a configuration error."""
     pass
+
+
+class IndexNotBuiltError(SPORCError):
+    """Raised when a precomputed index is required but has not been built yet."""
+    pass

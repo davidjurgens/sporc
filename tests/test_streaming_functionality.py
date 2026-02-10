@@ -559,7 +559,7 @@ class TestStreamingFunctionality:
         assert 'Education Podcast' in sporc._podcasts
 
         # Test that len() now works
-        assert len(sporc) == 1134058
+        assert len(sporc) == 1
 
         # Test that get_all_podcasts() now works
         podcasts = sporc.get_all_podcasts()
@@ -629,7 +629,7 @@ class TestStreamingFunctionality:
         assert 'Education Podcast' in sporc._podcasts
 
         # Test that len() returns the correct value in streaming mode
-        assert len(sporc) == 1134058
+        assert len(sporc) == 1
 
         # Test that get_all_podcasts() now works
         podcasts = sporc.get_all_podcasts()

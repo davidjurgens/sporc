@@ -31,6 +31,7 @@ from .exceptions import (
     SPORCError,
     DatasetAccessError,
     AuthenticationError,
+    IndexNotBuiltError,
     NotFoundError
 )
 
@@ -181,7 +182,7 @@ class SPORCDataset:
     def __init__(self, cache_dir: Optional[str] = None, use_auth_token: Optional[str] = None,
                  streaming: bool = False, custom_cache_dir: Optional[str] = None,
                  local_data_dir: Optional[str] = None, show_progress: bool = True,
-                 load_turns_eagerly: bool = True):
+                 load_turns_eagerly: bool = True, parquet_dir: Optional[str] = None):
         """
         Initialize the SPORC dataset.
 
@@ -198,6 +199,10 @@ class SPORCDataset:
                            - episodeLevelDataSample.jsonl.gz
                            - speakerTurnData.jsonl.gz
                            - speakerTurnDataSample.jsonl.gz
+            parquet_dir: Directory containing the partitioned Parquet layout
+                        (produced by scripts/convert_to_parquet.py). When set,
+                        all operations use the fast Parquet backend instead of
+                        streaming or in-memory modes.
             show_progress: Whether to show tqdm progress bars during loading (default: True)
             load_turns_eagerly: If True, loads all turn data during initialization (default: True).
                               If False, turn data is stored separately and loaded on-demand.
@@ -210,6 +215,29 @@ class SPORCDataset:
         self.local_data_dir = local_data_dir
         self.show_progress = show_progress
         self.load_turns_eagerly = load_turns_eagerly
+        self.parquet_dir = parquet_dir
+
+        # Parquet backend mode
+        self._parquet_mode = parquet_dir is not None
+        self._parquet_backend = None
+
+        if self._parquet_mode:
+            from .parquet_backend import ParquetBackend
+            logger.info("Initializing Parquet backend from %s", parquet_dir)
+            self._parquet_backend = ParquetBackend(parquet_dir)
+            self._loaded = True
+            self._podcasts: Dict[str, Podcast] = {}
+            self._episodes: List[Episode] = []
+            self._selective_mode = False
+            self._local_mode = False
+            self._turns_by_episode: Dict[str, List[Dict[str, Any]]] = {}
+            self._turns_loaded = True
+            self._turn_index: Dict[str, List[int]] = {}
+            self._turn_file_path: Optional[str] = None
+            self._index_built = False
+            self._index_lock = threading.Lock()
+            self._dataset = None
+            return
 
         # Data storage
         self._dataset = None
@@ -1618,6 +1646,10 @@ class SPORCDataset:
         Raises:
             NotFoundError: If the podcast is not found
         """
+        if self._parquet_mode:
+            pinfo = self._parquet_backend.get_podcast_by_name(name)
+            return self._parquet_backend.build_podcast_object(pinfo["podcast_id"])
+
         if self.streaming and not self._selective_mode:
             return self._search_podcast_streaming(name)
 
@@ -1760,6 +1792,24 @@ class SPORCDataset:
         Returns:
             List of episodes matching the criteria
         """
+        if self._parquet_mode:
+            rows = self._parquet_backend.search_episodes(**criteria)
+            episodes = []
+            for row in rows:
+                pid = row.get("podcast_id", "")
+                eid = row.get("episode_id", "")
+                try:
+                    ep = self._parquet_backend.build_episode_object(pid, eid)
+                    episodes.append(ep)
+                except Exception as e:
+                    logger.debug(f"Skipping episode during parquet search: {e}")
+            if max_episodes and len(episodes) > max_episodes:
+                if sampling_mode == "first":
+                    episodes = episodes[:max_episodes]
+                else:
+                    episodes = random.sample(episodes, max_episodes)
+            return episodes
+
         if self.streaming and not self._selective_mode:
             return self._search_episodes_streaming(max_episodes, sampling_mode, **criteria)
 
@@ -1869,6 +1919,16 @@ class SPORCDataset:
         Returns:
             List of podcasts with episodes in the specified subcategory
         """
+        if self._parquet_mode:
+            pids = self._parquet_backend.get_podcasts_by_category(subcategory)
+            podcasts = []
+            for pid in pids:
+                try:
+                    podcasts.append(self._parquet_backend.build_podcast_object(pid))
+                except Exception as e:
+                    logger.debug(f"Skipping podcast during subcategory search: {e}")
+            return podcasts
+
         if self.streaming and not self._selective_mode:
             return self._search_podcasts_by_subcategory_streaming(subcategory)
 
@@ -2060,6 +2120,23 @@ class SPORCDataset:
             max_episodes: Maximum number of episodes to yield (None for all)
             sampling_mode: How to sample episodes ("first" or "random")
         """
+        if self._parquet_mode:
+            rows = self._parquet_backend.search_episodes()
+            if max_episodes and len(rows) > max_episodes:
+                if sampling_mode == "first":
+                    rows = rows[:max_episodes]
+                else:
+                    rows = random.sample(rows, max_episodes)
+            for row in rows:
+                try:
+                    ep = self._parquet_backend.build_episode_object(
+                        row["podcast_id"], row["episode_id"]
+                    )
+                    yield ep
+                except Exception as e:
+                    logger.debug(f"Skipping episode during parquet iteration: {e}")
+            return
+
         if self.streaming:
             logger.info("Iterating over episodes in streaming mode...")
             if max_episodes:
@@ -2118,6 +2195,20 @@ class SPORCDataset:
 
     def iterate_podcasts(self, max_podcasts: Optional[int] = None, sampling_mode: str = "first") -> Iterator[Podcast]:
         """Iterate over podcasts without loading them all into memory."""
+        if self._parquet_mode:
+            podcast_ids = self._parquet_backend._podcast_df["podcast_id"].tolist()
+            if max_podcasts and len(podcast_ids) > max_podcasts:
+                if sampling_mode == "first":
+                    podcast_ids = podcast_ids[:max_podcasts]
+                else:
+                    podcast_ids = random.sample(podcast_ids, max_podcasts)
+            for pid in podcast_ids:
+                try:
+                    yield self._parquet_backend.build_podcast_object(pid)
+                except Exception as e:
+                    logger.debug(f"Skipping podcast during parquet iteration: {e}")
+            return
+
         if not self.streaming:
             raise RuntimeError("iterate_podcasts() is only available in streaming mode")
 
@@ -2135,7 +2226,9 @@ class SPORCDataset:
         last_progress_time = time.time()
 
         yielded_titles = set()
-        all_podcasts = []  # For random sampling
+        # For random mode, use reservoir sampling to keep at most max_podcasts
+        # items in memory at any time (avoids accumulating all podcasts).
+        reservoir = []  # Only used in random mode
 
         # Use safe iterator to handle data type inconsistencies
         for record in self._create_safe_iterator(self._dataset):
@@ -2146,7 +2239,7 @@ class SPORCDataset:
 
                     # Check if we've moved to a new podcast
                     if current_podcast_title is None or podcast_title != current_podcast_title:
-                        # Yield the previous podcast if it exists and hasn't been yielded yet
+                        # Process the previous podcast if it exists and hasn't been yielded yet
                         if current_podcast is not None and current_podcast_title not in yielded_titles:
                             podcast_count += 1
 
@@ -2156,8 +2249,14 @@ class SPORCDataset:
                                     if len(yielded_titles) < max_podcasts:
                                         yield current_podcast
                                         yielded_titles.add(current_podcast_title)
-                                else:  # random mode - collect for later sampling
-                                    all_podcasts.append(current_podcast)
+                                else:  # random mode - reservoir sampling
+                                    if len(reservoir) < max_podcasts:
+                                        reservoir.append(current_podcast)
+                                    else:
+                                        j = random.randint(0, podcast_count - 1)
+                                        if j < max_podcasts:
+                                            reservoir[j] = current_podcast
+                                    yielded_titles.add(current_podcast_title)
                             else:
                                 # No limit, yield directly
                                 yield current_podcast
@@ -2198,7 +2297,7 @@ class SPORCDataset:
                     logger.debug(f"Skipping podcast episode due to processing error: {e}")
                     continue
 
-        # Yield the last podcast if it hasn't been yielded yet
+        # Process the last podcast if it hasn't been yielded yet
         if current_podcast is not None and current_podcast_title not in yielded_titles:
             podcast_count += 1
 
@@ -2207,21 +2306,21 @@ class SPORCDataset:
                     if len(yielded_titles) < max_podcasts:
                         yield current_podcast
                         yielded_titles.add(current_podcast_title)
-                else:  # random mode
-                    all_podcasts.append(current_podcast)
+                else:  # random mode - reservoir sampling
+                    if len(reservoir) < max_podcasts:
+                        reservoir.append(current_podcast)
+                    else:
+                        j = random.randint(0, podcast_count - 1)
+                        if j < max_podcasts:
+                            reservoir[j] = current_podcast
             else:
                 yield current_podcast
                 yielded_titles.add(current_podcast_title)
 
-        # Handle random sampling
-        if max_podcasts and sampling_mode == "random" and all_podcasts:
-            logger.info(f"Applying random sampling to {len(all_podcasts)} podcasts...")
-            if max_podcasts < len(all_podcasts):
-                selected_podcasts = random.sample(all_podcasts, max_podcasts)
-            else:
-                selected_podcasts = all_podcasts
-
-            for podcast in selected_podcasts:
+        # Yield reservoir contents for random mode
+        if max_podcasts and sampling_mode == "random" and reservoir:
+            logger.info(f"Yielding {len(reservoir)} randomly sampled podcasts...")
+            for podcast in reservoir:
                 yield podcast
 
         total_time = time.time() - start_time
@@ -2235,6 +2334,9 @@ class SPORCDataset:
         Returns:
             Dictionary with dataset statistics
         """
+        if self._parquet_mode:
+            return self._parquet_backend.get_statistics()
+
         if self.streaming and not self._selective_mode:
             # Calculate statistics from the entire streaming dataset
             return self._get_dataset_statistics_streaming()
@@ -2414,17 +2516,190 @@ class SPORCDataset:
             'speaker_distribution': speaker_counts,
         }
 
+    # ------------------------------------------------------------------
+    # Search, retrieval & precomputed index methods (parquet mode only)
+    # ------------------------------------------------------------------
+    def _require_parquet_mode(self, method_name: str) -> None:
+        """Raise if not in parquet mode."""
+        if not self._parquet_mode:
+            raise SPORCError(
+                f"{method_name}() requires parquet mode. "
+                "Initialize with: SPORCDataset(parquet_dir='...')"
+            )
+
+    def search_turns(self, query: str, *, mode: str = "fts",
+                     podcast_id: Optional[str] = None,
+                     episode_id: Optional[str] = None,
+                     speaker_role: Optional[str] = None,
+                     limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Search turn text across the corpus using full-text search.
+
+        Requires parquet mode and the DuckDB search index
+        (built by ``scripts/build_indexes.py --phase 3``).
+
+        Args:
+            query: Search query string.
+            mode: "fts" (BM25 ranked), "exact" (ILIKE), or "regex".
+            podcast_id: Filter to a specific podcast.
+            episode_id: Filter to a specific episode.
+            speaker_role: Filter by speaker role.
+            limit: Maximum results to return.
+            offset: Number of results to skip.
+
+        Returns:
+            List of turn dicts with score.
+        """
+        self._require_parquet_mode("search_turns")
+        return self._parquet_backend.search_turns(
+            query, mode=mode, podcast_id=podcast_id,
+            episode_id=episode_id, speaker_role=speaker_role,
+            limit=limit, offset=offset,
+        )
+
+    def search_episodes_by_text(self, query: str, *, mode: str = "fts",
+                                limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Find episodes containing matching text.
+
+        Args:
+            query: Search query string.
+            mode: "fts" (BM25 ranked), "exact" (ILIKE), or "regex".
+            limit: Maximum number of episodes.
+
+        Returns:
+            List of dicts with episode_id, podcast_id, match_count, best_score.
+        """
+        self._require_parquet_mode("search_episodes_by_text")
+        return self._parquet_backend.search_episodes_by_text(
+            query, mode=mode, limit=limit,
+        )
+
+    def search_by_speaker_name(self, name: str, *, role: Optional[str] = None,
+                               exact: bool = False,
+                               limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Find episodes featuring a speaker by name.
+
+        Args:
+            name: Speaker name to search for.
+            role: Filter by role ("host"/"guest"/None).
+            exact: Require exact name match.
+            limit: Maximum results.
+
+        Returns:
+            List of dicts with episode_id, podcast_id, name_original, role.
+        """
+        self._require_parquet_mode("search_by_speaker_name")
+        return self._parquet_backend.search_by_speaker_name(
+            name, role=role, exact=exact, limit=limit,
+        )
+
+    def concordance(self, word: str, *, context_words: int = 10,
+                    speaker_role: Optional[str] = None,
+                    podcast_id: Optional[str] = None,
+                    limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Key Word In Context search.
+
+        Args:
+            word: Word or phrase to find.
+            context_words: Number of context words on each side.
+            speaker_role: Filter by speaker role.
+            podcast_id: Filter to a specific podcast.
+            limit: Maximum results.
+
+        Returns:
+            List of KWIC dicts with left_context, keyword, right_context,
+            and metadata.
+        """
+        self._require_parquet_mode("concordance")
+        return self._parquet_backend.concordance(
+            word, context_words=context_words,
+            speaker_role=speaker_role, podcast_id=podcast_id,
+            limit=limit,
+        )
+
+    def get_episode_metrics(self, episode_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get precomputed metrics for an episode.
+
+        Args:
+            episode_id: The episode to look up.
+
+        Returns:
+            Dict of metrics or None if not found.
+        """
+        self._require_parquet_mode("get_episode_metrics")
+        return self._parquet_backend.get_episode_metrics(episode_id)
+
+    def filter_episodes_by_metrics(self, **kwargs) -> List[Dict[str, Any]]:
+        """
+        Filter episodes by precomputed metrics.
+
+        Keyword Args:
+            min_word_count, max_word_count, min_turn_count, max_turn_count,
+            min_speaking_rate, max_speaking_rate,
+            min_discourse_marker_rate, max_discourse_marker_rate,
+            min_host_proportion, max_host_proportion,
+            min_avg_gap, max_avg_gap, limit.
+
+        Returns:
+            List of episode metric dicts.
+        """
+        self._require_parquet_mode("filter_episodes_by_metrics")
+        return self._parquet_backend.filter_episodes_by_metrics(**kwargs)
+
+    def get_turn_metrics(self, podcast_id: str,
+                         episode_id: str) -> List[Dict[str, Any]]:
+        """
+        Get precomputed turn-level metrics for an episode.
+
+        Args:
+            podcast_id: The podcast partition key.
+            episode_id: The episode to look up.
+
+        Returns:
+            List of turn metric dicts sorted by turn_count.
+        """
+        self._require_parquet_mode("get_turn_metrics")
+        return self._parquet_backend.get_turn_metrics(podcast_id, episode_id)
+
+    def estimate_word_audio(self, podcast_id: str, episode_id: str,
+                            word: str,
+                            occurrence: int = 0) -> Optional[Dict[str, Any]]:
+        """
+        Estimate audio time range for a word occurrence in an episode.
+
+        Args:
+            podcast_id: The podcast partition key.
+            episode_id: The episode to search in.
+            word: The word to locate.
+            occurrence: Which occurrence (0-indexed).
+
+        Returns:
+            Dict with mp3_url, estimated_start, estimated_end,
+            turn_start, turn_end, turn_text, confidence.
+        """
+        self._require_parquet_mode("estimate_word_audio")
+        return self._parquet_backend.estimate_word_audio(
+            podcast_id, episode_id, word, occurrence=occurrence,
+        )
+
     def __len__(self) -> int:
         """Get the number of episodes in the dataset."""
+        if self._parquet_mode:
+            return self._parquet_backend.num_episodes
         if self.streaming and not self._selective_mode:
             raise RuntimeError("len() is not available in streaming mode")
-        if self.streaming and self._selective_mode:
-            # Return the total number of episodes in the dataset
-            return 1134058
         return len(self._episodes)
 
     def __str__(self) -> str:
         """String representation of the dataset."""
+        if self._parquet_mode:
+            return (f"SPORCDataset(parquet, {self._parquet_backend.num_podcasts} podcasts, "
+                    f"{self._parquet_backend.num_episodes} episodes)")
+
         mode_info = []
         if self._local_mode:
             mode_info.append("local")
@@ -2443,6 +2718,10 @@ class SPORCDataset:
 
     def __repr__(self) -> str:
         """Detailed string representation of the dataset."""
+        if self._parquet_mode:
+            return (f"SPORCDataset(parquet, podcasts={self._parquet_backend.num_podcasts}, "
+                    f"episodes={self._parquet_backend.num_episodes}, loaded=True)")
+
         mode_info = []
         if self._local_mode:
             mode_info.append("local")
@@ -2676,6 +2955,11 @@ class SPORCDataset:
         if episode._turns_loaded:
             return
 
+        # If the episode has a turn loader (e.g. from Parquet backend), use it
+        if episode._turn_loader is not None:
+            episode._turn_loader()
+            return
+
         if not self._turns_loaded:
             raise RuntimeError("Turn data not available. Dataset may not be loaded or turn data was not stored.")
 
@@ -2775,7 +3059,20 @@ class SPORCDataset:
         """
         Build an index mapping episode URLs to file offsets in the turn data file.
         This allows efficient random access to turns for specific episodes.
+
+        .. deprecated::
+            The gzip seek-based index does not support true random access
+            (gzip must decompress from the start, making seeks O(n)).
+            Use the Parquet backend (``parquet_dir`` parameter) instead.
         """
+        warnings.warn(
+            "The gzip seek-based turn index is deprecated because gzip does not "
+            "support true random seeks (each seek decompresses from the start). "
+            "Use the Parquet backend instead by passing parquet_dir to SPORCDataset.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if self._index_built:
             return
 

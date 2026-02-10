@@ -401,9 +401,7 @@ class TestSPORCDatasetLazyLoading:
             {'mp3url': 'episode2.mp3', 'turnText': 'Test'}
         ]
 
-        with patch('sporc.dataset.time.time') as mock_time:
-            mock_time.side_effect = [0, 1]  # start_time, end_time
-
+        with patch('sporc.dataset.time.time', return_value=0):
             self.dataset._store_turns_for_lazy_loading(speaker_turns)
 
             assert self.dataset._turns_loaded is True
@@ -423,6 +421,7 @@ class TestSPORCDatasetLazyLoading:
         """Test loading turns when turn data is not available."""
         episode = Mock()
         episode._turns_loaded = False
+        episode._turn_loader = None
         self.dataset._turns_loaded = False
 
         with pytest.raises(RuntimeError, match="Turn data not available"):
@@ -432,6 +431,7 @@ class TestSPORCDatasetLazyLoading:
         """Test efficient loading of turns for episode."""
         episode = Mock()
         episode._turns_loaded = False
+        episode._turn_loader = None
         episode.mp3_url = 'test.mp3'
 
         self.dataset._turns_loaded = True
@@ -446,6 +446,7 @@ class TestSPORCDatasetLazyLoading:
         """Test memory-based loading of turns for episode."""
         episode = Mock()
         episode._turns_loaded = False
+        episode._turn_loader = None
         episode.mp3_url = 'test.mp3'
         episode.title = 'Test Episode'
 
