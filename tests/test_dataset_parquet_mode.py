@@ -1,47 +1,62 @@
 """
-Tests for SPORCDataset parquet-mode wrappers and mode gating.
+Tests for SPORCDataset parquet-mode wrappers and initialization.
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from sporc.dataset import SPORCDataset
 from sporc.exceptions import SPORCError, IndexNotBuiltError
 
 
-def _make_dataset(parquet_mode=True):
+def _make_dataset():
     """Create a SPORCDataset instance with skipped __init__."""
     ds = SPORCDataset.__new__(SPORCDataset)
-    ds._parquet_mode = parquet_mode
     ds._parquet_backend = MagicMock()
-    ds.streaming = False
-    ds._selective_mode = False
-    ds._local_mode = False
-    ds._episodes = []
+    ds._loaded = True
     return ds
 
 
 # ===================================================================
-# _require_parquet_mode
+# __init__ download logic
 # ===================================================================
 
 
-class TestRequireParquetMode:
-    """Tests for _require_parquet_mode gate."""
+class TestInit:
+    """Tests for __init__ download logic."""
 
-    def test_not_parquet_mode_raises(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds._require_parquet_mode("search_turns")
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
+    def test_snapshot_download_called_when_no_parquet_dir(self, mock_download, mock_backend):
+        """snapshot_download is called when parquet_dir is None."""
+        ds = SPORCDataset()
+        mock_download.assert_called_once_with(
+            repo_id="blitt/SPoRC",
+            repo_type="dataset",
+            token=None,
+            cache_dir=None,
+        )
+        mock_backend.assert_called_once_with("/fake/cache/dir")
 
-    def test_parquet_mode_passes(self):
-        ds = _make_dataset(parquet_mode=True)
-        ds._require_parquet_mode("search_turns")
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download")
+    def test_snapshot_download_not_called_when_parquet_dir_provided(self, mock_download, mock_backend):
+        """snapshot_download is NOT called when parquet_dir is given."""
+        ds = SPORCDataset(parquet_dir="/my/local/dir")
+        mock_download.assert_not_called()
+        mock_backend.assert_called_once_with("/my/local/dir")
 
-    def test_error_message_includes_method_name(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="search_turns"):
-            ds._require_parquet_mode("search_turns")
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
+    def test_auth_token_and_cache_dir_passed_through(self, mock_download, mock_backend):
+        """use_auth_token and cache_dir are passed to snapshot_download."""
+        ds = SPORCDataset(use_auth_token="hf_TOKEN", cache_dir="/custom/cache")
+        mock_download.assert_called_once_with(
+            repo_id="blitt/SPoRC",
+            repo_type="dataset",
+            token="hf_TOKEN",
+            cache_dir="/custom/cache",
+        )
 
 
 # ===================================================================
@@ -173,52 +188,3 @@ class TestIndexNotBuiltErrorPropagation:
         self._setup_raise(ds, "filter_episodes_by_metrics")
         with pytest.raises(IndexNotBuiltError):
             ds.filter_episodes_by_metrics(min_word_count=100)
-
-
-# ===================================================================
-# Non-Parquet Mode Rejection
-# ===================================================================
-
-
-class TestNonParquetModeRejection:
-    """All 8 wrappers raise SPORCError when _parquet_mode=False."""
-
-    def test_search_turns_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.search_turns("hello")
-
-    def test_search_episodes_by_text_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.search_episodes_by_text("hello")
-
-    def test_search_by_speaker_name_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.search_by_speaker_name("John")
-
-    def test_concordance_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.concordance("um")
-
-    def test_get_episode_metrics_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.get_episode_metrics("ep1")
-
-    def test_filter_episodes_by_metrics_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.filter_episodes_by_metrics(min_word_count=100)
-
-    def test_get_turn_metrics_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.get_turn_metrics("pod1", "ep1")
-
-    def test_estimate_word_audio_rejected(self):
-        ds = _make_dataset(parquet_mode=False)
-        with pytest.raises(SPORCError, match="requires parquet mode"):
-            ds.estimate_word_audio("pod1", "ep1", "hello")

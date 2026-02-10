@@ -3,43 +3,51 @@ from sporc.episode import Episode, TimeRangeBehavior
 from sporc.turn import Turn
 from datetime import datetime
 
-@pytest.fixture
-def sample_turns_data():
+
+def _make_turns():
+    """Create Turn objects for testing."""
     return [
-        {
-            "speaker": ["SPEAKER_00"],
-            "turnText": "Hello world",
-            "startTime": 0.0,
-            "endTime": 5.0,
-            "duration": 5.0,
-            "turnCount": 1,
-            "inferredSpeakerRole": None,
-            "inferredSpeakerName": None,
-            "mp3url": "http://example.com/ep.mp3",
-        },
-        {
-            "speaker": ["SPEAKER_01"],
-            "turnText": "Guest intro",
-            "startTime": 5.0,
-            "endTime": 10.0,
-            "duration": 5.0,
-            "turnCount": 2,
-            "inferredSpeakerRole": "guest",
-            "inferredSpeakerName": "Alice",
-            "mp3url": "http://example.com/ep.mp3",
-        },
-        {
-            "speaker": ["SPEAKER_00"],
-            "turnText": "Host reply",
-            "startTime": 10.0,
-            "endTime": 15.0,
-            "duration": 5.0,
-            "turnCount": 3,
-            "inferredSpeakerRole": "host",
-            "inferredSpeakerName": "Bob",
-            "mp3url": "http://example.com/ep.mp3",
-        },
+        Turn(
+            speaker=["SPEAKER_00"],
+            text="Hello world",
+            start_time=0.0,
+            end_time=5.0,
+            duration=5.0,
+            turn_count=1,
+            inferred_speaker_role=None,
+            inferred_speaker_name=None,
+            mp3_url="http://example.com/ep.mp3",
+        ),
+        Turn(
+            speaker=["SPEAKER_01"],
+            text="Guest intro",
+            start_time=5.0,
+            end_time=10.0,
+            duration=5.0,
+            turn_count=2,
+            inferred_speaker_role="guest",
+            inferred_speaker_name="Alice",
+            mp3_url="http://example.com/ep.mp3",
+        ),
+        Turn(
+            speaker=["SPEAKER_00"],
+            text="Host reply",
+            start_time=10.0,
+            end_time=15.0,
+            duration=5.0,
+            turn_count=3,
+            inferred_speaker_role="host",
+            inferred_speaker_name="Bob",
+            mp3_url="http://example.com/ep.mp3",
+        ),
     ]
+
+
+def _load_turns(episode, turns):
+    """Load Turn objects directly into an episode."""
+    episode._turns = sorted(turns, key=lambda t: t.start_time)
+    episode._turns_loaded = True
+
 
 @pytest.fixture
 def sample_episode():
@@ -59,10 +67,11 @@ def sample_episode():
         episode_date_localized=1640995200000,
     )
 
-def test_load_turns_and_accessors(sample_episode, sample_turns_data):
+def test_load_turns_and_accessors(sample_episode):
     with pytest.raises(RuntimeError):
         _ = sample_episode.turns
-    sample_episode.load_turns(sample_turns_data)
+    turns = _make_turns()
+    _load_turns(sample_episode, turns)
     assert sample_episode._turns_loaded
     assert sample_episode.turn_count == 3
     assert sample_episode.has_turns is True
@@ -71,8 +80,8 @@ def test_load_turns_and_accessors(sample_episode, sample_turns_data):
     assert list(iter(sample_episode)) == sample_episode.turns
     assert len(sample_episode) == 3
 
-def test_get_turns_by_time_range(sample_episode, sample_turns_data):
-    sample_episode.load_turns(sample_turns_data)
+def test_get_turns_by_time_range(sample_episode):
+    _load_turns(sample_episode, _make_turns())
     strict = sample_episode.get_turns_by_time_range(0, 10, TimeRangeBehavior.STRICT)
     assert len(strict) == 2
     partial = sample_episode.get_turns_by_time_range(0, 10, TimeRangeBehavior.INCLUDE_PARTIAL)
@@ -81,8 +90,8 @@ def test_get_turns_by_time_range(sample_episode, sample_turns_data):
     assert len(full) == 2
     assert sample_episode.get_turns_by_time_range(1000, 2000) == []
 
-def test_get_turns_by_time_range_with_trimming(sample_episode, sample_turns_data):
-    sample_episode.load_turns(sample_turns_data)
+def test_get_turns_by_time_range_with_trimming(sample_episode):
+    _load_turns(sample_episode, _make_turns())
     result = sample_episode.get_turns_by_time_range_with_trimming(0, 10)
     assert isinstance(result, list)
     assert all("turn" in d for d in result)
@@ -90,8 +99,8 @@ def test_get_turns_by_time_range_with_trimming(sample_episode, sample_turns_data
         if d['turn'].start_time < 0 or d['turn'].end_time > 10:
             assert d['was_trimmed']
 
-def test_get_turns_by_speaker_and_role(sample_episode, sample_turns_data):
-    sample_episode.load_turns(sample_turns_data)
+def test_get_turns_by_speaker_and_role(sample_episode):
+    _load_turns(sample_episode, _make_turns())
     assert len(sample_episode.get_turns_by_speaker("SPEAKER_00")) == 2
     assert len(sample_episode.get_turns_by_speaker("Alice")) == 1
     assert len(sample_episode.get_turns_by_role("host")) == 1
@@ -101,8 +110,8 @@ def test_get_turns_by_speaker_and_role(sample_episode, sample_turns_data):
     assert len(sample_episode.get_turns_by_min_length(2)) == 3
     assert len(sample_episode.get_turns_by_min_length(100)) == 0
 
-def test_episode_properties_and_to_dict(sample_episode, sample_turns_data):
-    sample_episode.load_turns(sample_turns_data)
+def test_episode_properties_and_to_dict(sample_episode):
+    _load_turns(sample_episode, _make_turns())
     d = sample_episode.to_dict()
     assert d['title'] == "Test Episode"
     assert d['duration_minutes'] == 31.0
@@ -117,8 +126,8 @@ def test_episode_properties_and_to_dict(sample_episode, sample_turns_data):
     assert d['turns_loaded'] is True
     assert d['num_turns'] == 3
 
-def test_episode_str_and_repr(sample_episode, sample_turns_data):
-    sample_episode.load_turns(sample_turns_data)
+def test_episode_str_and_repr(sample_episode):
+    _load_turns(sample_episode, _make_turns())
     s = str(sample_episode)
     r = repr(sample_episode)
     assert "Test Episode" in s

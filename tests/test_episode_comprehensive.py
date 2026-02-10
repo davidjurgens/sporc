@@ -647,36 +647,6 @@ class TestEpisodePropertiesAndMethods:
         with pytest.raises(RuntimeError, match="Turns not loaded"):
             episode.get_turn_statistics()
 
-    def test_load_turns(self):
-        """Test load_turns method."""
-        episode = Episode(
-            title="Test",
-            description="Test",
-            mp3_url="http://example.com/test.mp3",
-            duration_seconds=1800.0,
-            transcript="Test",
-            podcast_title="Test",
-            podcast_description="Test",
-            rss_url="http://example.com/rss.xml"
-        )
-
-        turns_data = [
-            {
-                'mp3url': 'http://example.com/test.mp3',
-                'speaker': ['SPEAKER_00'],
-                'turnText': 'Hello',
-                'startTime': 0.0,
-                'endTime': 5.0,
-                'duration': 5.0,
-                'turnCount': 1
-            }
-        ]
-
-        episode.load_turns(turns_data)
-        assert episode._turns_loaded is True
-        assert len(episode._turns) == 1
-        assert episode._turns[0].text == "Hello"
-
     def test_to_dict(self):
         """Test to_dict method."""
         episode_dict = self.episode.to_dict()

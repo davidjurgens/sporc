@@ -811,39 +811,6 @@ class Episode:
             'role_distribution': role_counts,
         }
 
-    def load_turns(self, turns_data: List[Dict[str, Any]]) -> None:
-        """
-        Load turn data for this episode.
-
-        Args:
-            turns_data: List of turn dictionaries from the speaker turn dataset
-        """
-        self._turns = []
-        for turn_data in turns_data:
-            if turn_data.get('mp3url') == self.mp3_url:
-                turn = Turn(
-                    speaker=turn_data.get('speaker', []),
-                    text=turn_data.get('turnText', ''),
-                    start_time=turn_data.get('startTime', 0.0),
-                    end_time=turn_data.get('endTime', 0.0),
-                    duration=turn_data.get('duration', 0.0),
-                    turn_count=turn_data.get('turnCount', 0),
-                    mfcc1_sma3_mean=turn_data.get('mfcc1_sma3Mean'),
-                    mfcc2_sma3_mean=turn_data.get('mfcc2_sma3Mean'),
-                    mfcc3_sma3_mean=turn_data.get('mfcc3_sma3Mean'),
-                    mfcc4_sma3_mean=turn_data.get('mfcc4_sma3Mean'),
-                    f0_semitone_from_27_5hz_sma3nz_mean=turn_data.get('F0semitoneFrom27.5Hz_sma3nzMean'),
-                    f1_frequency_sma3nz_mean=turn_data.get('F1frequency_sma3nzMean'),
-                    inferred_speaker_role=turn_data.get('inferredSpeakerRole'),
-                    inferred_speaker_name=turn_data.get('inferredSpeakerName'),
-                    mp3_url=turn_data.get('mp3url'),
-                )
-                self._turns.append(turn)
-
-        # Sort turns by start time
-        self._turns.sort(key=lambda x: x.start_time)
-        self._turns_loaded = True
-
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert the episode to a dictionary representation.

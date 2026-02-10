@@ -20,17 +20,14 @@ Examples:
   # Get dataset statistics
   sporc stats
 
+  # Get stats from a local parquet directory
+  sporc stats --parquet-dir /path/to/parquet
+
   # Search for a podcast
   sporc search-podcast "SingOut SpeakOut"
 
   # Search for episodes with criteria
   sporc search-episodes --min-duration 1800 --category education
-
-  # Use streaming mode
-  sporc stats --streaming
-
-  # Use selective loading
-  sporc stats --streaming --categories education science
         """
     )
 
@@ -39,16 +36,7 @@ Examples:
     # Stats command
     stats_parser = subparsers.add_parser("stats", help="Get dataset statistics")
     stats_parser.add_argument(
-        "--streaming", action="store_true", help="Use streaming mode"
-    )
-    stats_parser.add_argument(
-        "--categories", nargs="+", help="Filter by categories (selective mode)"
-    )
-    stats_parser.add_argument(
-        "--hosts", nargs="+", help="Filter by hosts (selective mode)"
-    )
-    stats_parser.add_argument(
-        "--min-episodes", type=int, help="Minimum episodes per podcast (selective mode)"
+        "--parquet-dir", help="Local directory with parquet files (downloads from HF if omitted)"
     )
 
     # Search podcast command
@@ -57,7 +45,7 @@ Examples:
     )
     search_podcast_parser.add_argument("name", help="Podcast name to search for")
     search_podcast_parser.add_argument(
-        "--streaming", action="store_true", help="Use streaming mode"
+        "--parquet-dir", help="Local directory with parquet files (downloads from HF if omitted)"
     )
 
     # Search episodes command
@@ -89,7 +77,7 @@ Examples:
         "--limit", type=int, default=10, help="Maximum number of results to show"
     )
     search_episodes_parser.add_argument(
-        "--streaming", action="store_true", help="Use streaming mode"
+        "--parquet-dir", help="Local directory with parquet files (downloads from HF if omitted)"
     )
 
     args = parser.parse_args()
@@ -111,10 +99,6 @@ Examples:
 
     except SPORCError as e:
         print(f"SPORC Error: {e}")
-        print("\nMake sure you have:")
-        print("1. Accepted the dataset terms on Hugging Face")
-        print("2. Set up Hugging Face authentication")
-        print("3. Installed all required dependencies")
         sys.exit(1)
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
@@ -128,24 +112,7 @@ def handle_stats(args: argparse.Namespace) -> None:
     """Handle the stats command."""
     print("Loading SPORC dataset...")
 
-    # Initialize dataset
-    if args.streaming:
-        sporc = SPORCDataset(streaming=True)
-
-        # Apply selective loading if criteria provided
-        if args.categories or args.hosts or args.min_episodes:
-            criteria = {}
-            if args.categories:
-                criteria['categories'] = args.categories
-            if args.hosts:
-                criteria['hosts'] = args.hosts
-            if args.min_episodes:
-                criteria['min_episodes'] = args.min_episodes
-
-            print(f"Loading subset with criteria: {criteria}")
-            sporc.load_podcast_subset(**criteria)
-    else:
-        sporc = SPORCDataset()
+    sporc = SPORCDataset(parquet_dir=getattr(args, 'parquet_dir', None))
 
     # Get statistics
     stats = sporc.get_dataset_statistics()
@@ -186,8 +153,7 @@ def handle_search_podcast(args: argparse.Namespace) -> None:
     """Handle the search-podcast command."""
     print(f"Searching for podcast: {args.name}")
 
-    # Initialize dataset
-    sporc = SPORCDataset(streaming=args.streaming)
+    sporc = SPORCDataset(parquet_dir=getattr(args, 'parquet_dir', None))
 
     # Search for podcast
     podcast = sporc.search_podcast(args.name)
@@ -230,8 +196,7 @@ def handle_search_episodes(args: argparse.Namespace) -> None:
     if args.subcategory:
         criteria['subcategory'] = args.subcategory
 
-    # Initialize dataset
-    sporc = SPORCDataset(streaming=args.streaming)
+    sporc = SPORCDataset(parquet_dir=getattr(args, 'parquet_dir', None))
 
     # Search for episodes
     episodes = sporc.search_episodes(**criteria)

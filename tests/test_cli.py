@@ -18,16 +18,10 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_stats_command(self, mock_parse_args, mock_handle_stats):
         """Test main function with stats command."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'stats'
-        mock_args.streaming = False
-        mock_args.categories = None
-        mock_args.hosts = None
-        mock_args.min_episodes = None
         mock_parse_args.return_value = mock_args
 
-        # Mock sys.argv to avoid actual command line parsing
         with patch.object(sys, 'argv', ['sporc', 'stats']):
             main()
 
@@ -37,14 +31,11 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_search_podcast_command(self, mock_parse_args, mock_handle_search_podcast):
         """Test main function with search-podcast command."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'search-podcast'
         mock_args.name = 'Test Podcast'
-        mock_args.streaming = False
         mock_parse_args.return_value = mock_args
 
-        # Mock sys.argv to avoid actual command line parsing
         with patch.object(sys, 'argv', ['sporc', 'search-podcast', 'Test Podcast']):
             main()
 
@@ -54,7 +45,6 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_search_episodes_command(self, mock_parse_args, mock_handle_search_episodes):
         """Test main function with search-episodes command."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'search-episodes'
         mock_args.min_duration = 1800
@@ -65,10 +55,8 @@ class TestCLI:
         mock_args.category = None
         mock_args.subcategory = None
         mock_args.limit = 10
-        mock_args.streaming = False
         mock_parse_args.return_value = mock_args
 
-        # Mock sys.argv to avoid actual command line parsing
         with patch.object(sys, 'argv', ['sporc', 'search-episodes', '--min-duration', '1800']):
             main()
 
@@ -77,29 +65,24 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_no_command(self, mock_parse_args):
         """Test main function with no command."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = None
         mock_parse_args.return_value = mock_args
 
-        # Mock sys.argv and sys.exit
         with patch.object(sys, 'argv', ['sporc']), \
              patch.object(sys, 'exit') as mock_exit:
             main()
 
-        # The function calls sys.exit(1) twice - once for no command, once for unknown command
         assert mock_exit.call_count >= 1
         mock_exit.assert_any_call(1)
 
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_unknown_command(self, mock_parse_args):
         """Test main function with unknown command."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'unknown'
         mock_parse_args.return_value = mock_args
 
-        # Mock sys.argv and sys.exit
         with patch.object(sys, 'argv', ['sporc', 'unknown']), \
              patch.object(sys, 'exit') as mock_exit:
             main()
@@ -109,12 +92,10 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_sporc_error(self, mock_parse_args):
         """Test main function with SPORC error."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'stats'
         mock_parse_args.return_value = mock_args
 
-        # Mock handle_stats to raise SPORCError
         with patch('sporc.cli.handle_stats', side_effect=SPORCError("Test error")), \
              patch.object(sys, 'argv', ['sporc', 'stats']), \
              patch.object(sys, 'exit') as mock_exit, \
@@ -122,18 +103,15 @@ class TestCLI:
             main()
 
         mock_exit.assert_called_once_with(1)
-        # Check that error message was printed
         mock_print.assert_any_call("SPORC Error: Test error")
 
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_keyboard_interrupt(self, mock_parse_args):
         """Test main function with keyboard interrupt."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'stats'
         mock_parse_args.return_value = mock_args
 
-        # Mock handle_stats to raise KeyboardInterrupt
         with patch('sporc.cli.handle_stats', side_effect=KeyboardInterrupt()), \
              patch.object(sys, 'argv', ['sporc', 'stats']), \
              patch.object(sys, 'exit') as mock_exit, \
@@ -146,12 +124,10 @@ class TestCLI:
     @patch('argparse.ArgumentParser.parse_args')
     def test_main_unexpected_error(self, mock_parse_args):
         """Test main function with unexpected error."""
-        # Mock command line arguments
         mock_args = MagicMock()
         mock_args.command = 'stats'
         mock_parse_args.return_value = mock_args
 
-        # Mock handle_stats to raise unexpected error
         with patch('sporc.cli.handle_stats', side_effect=Exception("Unexpected error")), \
              patch.object(sys, 'argv', ['sporc', 'stats']), \
              patch.object(sys, 'exit') as mock_exit, \
@@ -164,7 +140,6 @@ class TestCLI:
     @patch('sporc.cli.SPORCDataset')
     def test_handle_stats_basic(self, mock_sporc_class):
         """Test handle_stats with basic arguments."""
-        # Mock dataset and statistics
         mock_sporc = MagicMock()
         mock_stats = {
             'total_podcasts': 1000,
@@ -178,27 +153,18 @@ class TestCLI:
         mock_sporc.get_dataset_statistics.return_value = mock_stats
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
-        args.streaming = False
-        args.categories = None
-        args.hosts = None
-        args.min_episodes = None
+        args.parquet_dir = None
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_stats(args)
 
-        # Verify dataset was created (without streaming parameter)
-        mock_sporc_class.assert_called_once_with()
-
-        # Verify statistics were retrieved
+        mock_sporc_class.assert_called_once_with(parquet_dir=None)
         mock_sporc.get_dataset_statistics.assert_called_once()
 
     @patch('sporc.cli.SPORCDataset')
-    def test_handle_stats_streaming_selective(self, mock_sporc_class):
-        """Test handle_stats with streaming and selective loading."""
-        # Mock dataset and statistics
+    def test_handle_stats_with_parquet_dir(self, mock_sporc_class):
+        """Test handle_stats with parquet_dir argument."""
         mock_sporc = MagicMock()
         mock_stats = {
             'total_podcasts': 100,
@@ -212,31 +178,17 @@ class TestCLI:
         mock_sporc.get_dataset_statistics.return_value = mock_stats
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
-        args.streaming = True
-        args.categories = ['Education']
-        args.hosts = ['John Doe']
-        args.min_episodes = 10
+        args.parquet_dir = '/data/parquet'
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_stats(args)
 
-        # Verify dataset was created with streaming
-        mock_sporc_class.assert_called_once_with(streaming=True)
-
-        # Verify selective loading was called
-        mock_sporc.load_podcast_subset.assert_called_once_with(
-            categories=['Education'],
-            hosts=['John Doe'],
-            min_episodes=10
-        )
+        mock_sporc_class.assert_called_once_with(parquet_dir='/data/parquet')
 
     @patch('sporc.cli.SPORCDataset')
     def test_handle_stats_with_episode_types(self, mock_sporc_class):
         """Test handle_stats with episode types in statistics."""
-        # Mock dataset and statistics with episode types
         mock_sporc = MagicMock()
         mock_stats = {
             'total_podcasts': 1000,
@@ -251,18 +203,12 @@ class TestCLI:
         mock_sporc.get_dataset_statistics.return_value = mock_stats
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
-        args.streaming = False
-        args.categories = None
-        args.hosts = None
-        args.min_episodes = None
+        args.parquet_dir = None
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_stats(args)
 
-        # Verify episode types were printed
         mock_print.assert_any_call("\nEpisode types:")
         mock_print.assert_any_call("  full: 40000 episodes")
         mock_print.assert_any_call("  trailer: 10000 episodes")
@@ -270,7 +216,6 @@ class TestCLI:
     @patch('sporc.cli.SPORCDataset')
     def test_handle_search_podcast_found(self, mock_sporc_class):
         """Test handle_search_podcast when podcast is found."""
-        # Mock dataset and podcast
         mock_sporc = MagicMock()
         mock_podcast = MagicMock()
         mock_podcast.title = "Test Podcast"
@@ -280,7 +225,6 @@ class TestCLI:
         mock_podcast.host_names = ["John Doe", "Jane Smith"]
         mock_podcast.categories = ["Education", "Technology"]
 
-        # Create properly mocked episodes with required attributes
         mock_episode1 = MagicMock()
         mock_episode1.title = "Episode 1"
         mock_episode1.duration_minutes = 45.0
@@ -300,25 +244,19 @@ class TestCLI:
         mock_sporc.search_podcast.return_value = mock_podcast
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
         args.name = "Test Podcast"
-        args.streaming = False
+        args.parquet_dir = None
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_search_podcast(args)
 
-        # Verify dataset was created
-        mock_sporc_class.assert_called_once_with(streaming=False)
-
-        # Verify search was called
+        mock_sporc_class.assert_called_once_with(parquet_dir=None)
         mock_sporc.search_podcast.assert_called_once_with("Test Podcast")
 
     @patch('sporc.cli.SPORCDataset')
-    def test_handle_search_podcast_streaming(self, mock_sporc_class):
-        """Test handle_search_podcast with streaming mode."""
-        # Mock dataset and podcast
+    def test_handle_search_podcast_with_parquet_dir(self, mock_sporc_class):
+        """Test handle_search_podcast with parquet_dir."""
         mock_sporc = MagicMock()
         mock_podcast = MagicMock()
         mock_podcast.title = "Test Podcast"
@@ -328,7 +266,6 @@ class TestCLI:
         mock_podcast.host_names = ["John Doe"]
         mock_podcast.categories = ["Education"]
 
-        # Create properly mocked episode with required attributes
         mock_episode = MagicMock()
         mock_episode.title = "Test Episode"
         mock_episode.duration_minutes = 45.0
@@ -338,22 +275,18 @@ class TestCLI:
         mock_sporc.search_podcast.return_value = mock_podcast
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
         args.name = "Test Podcast"
-        args.streaming = True
+        args.parquet_dir = "/data/parquet"
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_search_podcast(args)
 
-        # Verify dataset was created with streaming
-        mock_sporc_class.assert_called_once_with(streaming=True)
+        mock_sporc_class.assert_called_once_with(parquet_dir="/data/parquet")
 
     @patch('sporc.cli.SPORCDataset')
     def test_handle_search_episodes_basic(self, mock_sporc_class):
         """Test handle_search_episodes with basic criteria."""
-        # Mock dataset and episodes
         mock_sporc = MagicMock()
         mock_episode1 = MagicMock()
         mock_episode1.title = "Episode 1"
@@ -374,7 +307,6 @@ class TestCLI:
         mock_sporc.search_episodes.return_value = [mock_episode1, mock_episode2]
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
         args.min_duration = 1800
         args.max_duration = None
@@ -384,22 +316,17 @@ class TestCLI:
         args.category = None
         args.subcategory = None
         args.limit = 10
-        args.streaming = False
+        args.parquet_dir = None
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_search_episodes(args)
 
-        # Verify dataset was created
-        mock_sporc_class.assert_called_once_with(streaming=False)
-
-        # Verify search was called with correct criteria (only min_duration)
+        mock_sporc_class.assert_called_once_with(parquet_dir=None)
         mock_sporc.search_episodes.assert_called_once_with(min_duration=1800)
 
     @patch('sporc.cli.SPORCDataset')
     def test_handle_search_episodes_complex_criteria(self, mock_sporc_class):
         """Test handle_search_episodes with complex criteria."""
-        # Mock dataset and episodes
         mock_sporc = MagicMock()
         mock_episode = MagicMock()
         mock_episode.title = "Test Episode"
@@ -411,7 +338,6 @@ class TestCLI:
         mock_sporc.search_episodes.return_value = [mock_episode]
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments with complex criteria
         args = MagicMock()
         args.min_duration = 1800
         args.max_duration = 7200
@@ -421,16 +347,12 @@ class TestCLI:
         args.category = "Education"
         args.subcategory = "Language Learning"
         args.limit = 5
-        args.streaming = True
+        args.parquet_dir = "/data/parquet"
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_search_episodes(args)
 
-        # Verify dataset was created with streaming
-        mock_sporc_class.assert_called_once_with(streaming=True)
-
-        # Verify search was called with all criteria (without max_episodes and sampling_mode)
+        mock_sporc_class.assert_called_once_with(parquet_dir="/data/parquet")
         mock_sporc.search_episodes.assert_called_once_with(
             min_duration=1800,
             max_duration=7200,
@@ -444,12 +366,10 @@ class TestCLI:
     @patch('sporc.cli.SPORCDataset')
     def test_handle_search_episodes_no_results(self, mock_sporc_class):
         """Test handle_search_episodes when no results are found."""
-        # Mock dataset with no results
         mock_sporc = MagicMock()
         mock_sporc.search_episodes.return_value = []
         mock_sporc_class.return_value = mock_sporc
 
-        # Mock arguments
         args = MagicMock()
         args.min_duration = 1800
         args.max_duration = None
@@ -459,11 +379,9 @@ class TestCLI:
         args.category = None
         args.subcategory = None
         args.limit = 10
-        args.streaming = False
+        args.parquet_dir = None
 
-        # Mock print to capture output
         with patch('builtins.print') as mock_print:
             handle_search_episodes(args)
 
-        # Verify the actual message that gets printed
         mock_print.assert_any_call("\nFound 0 episodes matching criteria: {'min_duration': 1800}")

@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="sporc",
-    version="0.2.0",
+    version="1.0.0",
     author="SPORC Package Maintainer",
     author_email="maintainer@example.com",
     description="A Python package for working with the SPORC (Structured Podcast Open Research Corpus) dataset",
@@ -30,7 +30,6 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "datasets>=2.0.0",
         "huggingface_hub>=0.16.0",
         "pandas>=1.3.0",
         "numpy>=1.21.0",

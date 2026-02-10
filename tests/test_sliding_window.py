@@ -260,21 +260,9 @@ class TestEpisodeSlidingWindow(unittest.TestCase):
             for i in range(10)  # 10 turns
         ]
 
-        # Load turns into episode
-        self.episode.load_turns([
-            {
-                'mp3url': 'test.mp3',
-                'speaker': turn.speaker,
-                'turnText': turn.text,
-                'startTime': turn.start_time,
-                'endTime': turn.end_time,
-                'duration': turn.duration,
-                'turnCount': turn.turn_count,
-                'inferredSpeakerName': turn.inferred_speaker_name,
-                'inferredSpeakerRole': turn.inferred_speaker_role
-            }
-            for turn in self.turns
-        ])
+        # Load turns directly into episode
+        self.episode._turns = sorted(self.turns, key=lambda t: t.start_time)
+        self.episode._turns_loaded = True
 
     def test_sliding_window_basic(self):
         """Test basic sliding window functionality."""
