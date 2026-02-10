@@ -35,7 +35,7 @@ from .constants import (
     get_popular_subcategories,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "SPORC Package Maintainer"
 __email__ = "maintainer@example.com"
 
