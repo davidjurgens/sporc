@@ -121,6 +121,14 @@ Two things worth knowing:
   wastes a fetch on an episode without them. Filtering the catalog directly,
   `num_main_speakers > 0` marks the same set.
 
+### Time span
+
+SPoRC is a **two-month snapshot**: every episode was published between
+**1 May and 30 June 2020** (median 28 May). It is not a longitudinal archive, so
+"trends over time" means trends across eight weeks — though the window does
+straddle a sharp, dateable event, which makes before/after designs unusually
+clean.
+
 ### Turn coverage
 
 Only **372,604 of 1,124,058 episodes (33%)** were diarized into speaker turns.
@@ -242,6 +250,12 @@ turn.is_host, turn.is_guest
 turn.get_audio_features()    # MFCCs, F0, F1
 ```
 
+**The acoustics are thin.** `get_audio_features()` returns six numbers —
+`mfcc1..4_sma3_mean`, one F0 mean, one F1 mean — each averaged over the *whole
+turn*. There is no F2, no frame-level contour, and **no word-level timing
+anywhere in SPoRC**. Vowel-level questions cannot be answered from these fields;
+see [Phonetics](#phonetics) for the way around it.
+
 **Role labels are sparse.** In a 174k-turn sample, 90.6% of turns are
 `NO_INFERRED_ROLE`, with only 7.4% `host` and 1.9% `guest`. So `get_host_turns()`,
 `search_turns(speaker_role=...)` and role distributions cover a small slice of an
@@ -261,6 +275,54 @@ for window in episode.sliding_window(window_size=10, overlap=2):
 for window in episode.sliding_window_by_time(window_duration=300, overlap_duration=60):
     ...
 ```
+
+## Phonetics
+
+SPoRC has no word timings, and its acoustics are six per-turn means with no F2 —
+so vowel-level work is impossible from the corpus alone. But every turn carries an
+`mp3_url` plus its own `start_time`/`end_time`, which is enough to fetch that turn
+and derive alignment properly.
+
+`sporc.phonetics` does that. It is optional and its dependencies are heavy, so it
+is opt-in and imported lazily:
+
+```bash
+pip install sporc[phonetics]     # torch, torchaudio, transformers, parselmouth
+                                 # plus an ffmpeg binary on PATH
+```
+
+```python
+from sporc.phonetics import find_word_tokens, lobanov_normalize
+
+# search -> fetch turn audio -> forced-align -> measure the vowel
+tokens = find_word_tokens(sporc, "caught", limit=50)
+df = lobanov_normalize(tokens)      # per-speaker z-scores; raw formants
+                                    # mostly measure vocal-tract length
+```
+
+Lower-level pieces, if you want the steps:
+
+```python
+from sporc.phonetics import fetch_turn_audio, align_turn, measure_formants
+
+audio, sr = fetch_turn_audio(turn)                      # range-fetches ONLY the turn
+words = align_turn(turn, audio=audio, level="word")     # real word timings
+phones = align_turn(turn, audio=clip, level="phone", word="caught")
+measure_formants(clip, sr, phones[1].start, phones[1].end)   # F1/F2/F3
+```
+
+Worth knowing before you rely on it:
+
+- **Only the turn is downloaded.** ffmpeg seeks into the remote mp3 with an HTTP
+  range request: ~1–2 s and a few hundred KB per turn, not a 100 MB episode.
+- **The audio is external.** `mp3_url` points at the publisher's CDN, not
+  HuggingFace. Links rot; some hosts need redirects resolved first, which
+  `fetch_turn_audio` does.
+- **`estimate_word_audio()` is not this.** It interpolates by character offset and
+  is deprecated for phonetic use.
+
+`examples/notebooks/07_sociophonetics_caught_cot.ipynb` works the whole thing
+through on the caught/cot merger.
 
 ## Error Handling
 
