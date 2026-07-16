@@ -12,6 +12,11 @@ Subsets are diarized-only by default, since two thirds of SPoRC episodes have no
 speaker turns and a learner hitting those would see empty results that look like
 bugs.
 
+The source layout need not be a full corpus copy. A directory populated by lazy
+fetching (SPORCDataset().prefetch(...), which writes into the HuggingFace
+snapshot dir) is a valid --data-dir: podcasts whose partitions are absent are
+reported and dropped rather than silently left in the catalogs.
+
 Usage:
     python scripts/make_subset.py --data-dir /path/to/sporc_parquet \\
         --out subsets/subset_01 --episodes 1000 --seed 1
@@ -21,6 +26,10 @@ Usage:
       python scripts/make_subset.py --data-dir DATA --out subsets/subset_$i \\
           --episodes 1000 --seed $i --exclude-used subsets/used.txt
     done
+
+    # From an explicit, hand-picked set of podcasts:
+    python scripts/make_subset.py --data-dir DATA --out subsets/tutorial \\
+        --podcast-ids tutorial_ids.txt
 """
 
 import argparse
@@ -90,6 +99,33 @@ def select_podcasts(data_dir, n_episodes, seed, diarized_only, exclude):
     return chosen, total
 
 
+def resolve_present(data_dir, podcast_ids):
+    """
+    Narrow *podcast_ids* to those whose episode partition is actually in
+    *data_dir*.
+
+    The catalogs describe the whole corpus, but a layout built by lazy fetching
+    holds only the podcasts that were touched. Filtering the catalogs to ids
+    whose partitions are absent would produce exactly the catalog/data
+    disagreement this script exists to prevent, so the ids are checked against
+    the partitions on disk first.
+    """
+    present, missing = [], []
+    for pid in podcast_ids:
+        if os.path.isdir(f"{data_dir}/episodes/podcast_id={pid}"):
+            present.append(pid)
+        else:
+            missing.append(pid)
+    if missing:
+        logger.warning(
+            "%d of %d selected podcasts have no episode partition in %s and "
+            "were dropped from the subset (first few: %s). Prefetch them first "
+            "if they were meant to be included.",
+            len(missing), len(podcast_ids), data_dir, missing[:5],
+        )
+    return present, missing
+
+
 def build(data_dir, out, podcast_ids, diarized_only):
     keep = set(podcast_ids)
     meta_out = os.path.join(out, "metadata")
@@ -126,11 +162,22 @@ def build(data_dir, out, podcast_ids, diarized_only):
     # the catalog: copying them whole would leave podcast.episodes yielding
     # undiarized episodes that the catalog says are not here, which is the
     # confusion this script exists to avoid.
+    #
+    # A missing *turns* tree is normal (two thirds of episodes are undiarized),
+    # but a missing *episodes* partition means the catalog would advertise a
+    # podcast whose data is absent. resolve_present() has already dropped those,
+    # so reaching one here is a bug rather than a data condition.
     n_files = 0
     for pid in podcast_ids:
         for tree, files in PARTITION_FILES.items():
             src_dir = f"{data_dir}/{tree}/podcast_id={pid}"
             if not os.path.isdir(src_dir):
+                if tree == "episodes":
+                    raise RuntimeError(
+                        f"episode partition for podcast_id={pid} vanished from "
+                        f"{data_dir} after selection; refusing to write a subset "
+                        "whose catalog does not match its data."
+                    )
                 continue
             dst_dir = f"{out}/{tree}/podcast_id={pid}"
             os.makedirs(dst_dir, exist_ok=True)
@@ -198,22 +245,45 @@ def main():
     p.add_argument("--exclude-used", default=None,
                    help="File of podcast_ids to avoid, appended to after "
                         "selection, so repeated runs build disjoint subsets")
+    p.add_argument("--podcast-ids", default=None,
+                   help="File of podcast_ids (one per line) to build from, "
+                        "instead of sampling. Use when the subset must contain "
+                        "particular podcasts -- random sampling almost never "
+                        "yields, say, a guest appearing on two different shows. "
+                        "Overrides --episodes/--seed/--exclude-used.")
     args = p.parse_args()
 
     if not os.path.isdir(args.data_dir):
         logger.error("Data directory not found: %s", args.data_dir)
         sys.exit(1)
 
-    exclude = set()
-    if args.exclude_used and os.path.exists(args.exclude_used):
-        with open(args.exclude_used) as f:
-            exclude = {ln.strip() for ln in f if ln.strip()}
-        logger.info("Excluding %d podcasts already used", len(exclude))
-
     diarized_only = not args.include_undiarized
-    pods, total = select_podcasts(args.data_dir, args.episodes, args.seed,
-                                  diarized_only, exclude)
-    logger.info("Selected %d podcasts / ~%d episodes", len(pods), total)
+
+    if args.podcast_ids:
+        if not os.path.exists(args.podcast_ids):
+            logger.error("Podcast id file not found: %s", args.podcast_ids)
+            sys.exit(1)
+        with open(args.podcast_ids) as f:
+            pods = [ln.strip() for ln in f
+                    if ln.strip() and not ln.startswith("#")]
+        pods = list(dict.fromkeys(pods))
+        logger.info("Building from %d explicit podcast ids", len(pods))
+    else:
+        exclude = set()
+        if args.exclude_used and os.path.exists(args.exclude_used):
+            with open(args.exclude_used) as f:
+                exclude = {ln.strip() for ln in f if ln.strip()}
+            logger.info("Excluding %d podcasts already used", len(exclude))
+
+        pods, total = select_podcasts(args.data_dir, args.episodes, args.seed,
+                                      diarized_only, exclude)
+        logger.info("Selected %d podcasts / ~%d episodes", len(pods), total)
+
+    pods, _missing = resolve_present(args.data_dir, pods)
+    if not pods:
+        logger.error("None of the selected podcasts have partitions in %s. "
+                     "Prefetch them before building the subset.", args.data_dir)
+        sys.exit(1)
 
     counts = build(args.data_dir, args.out, pods, diarized_only)
     size = sum(os.path.getsize(os.path.join(r, f))
