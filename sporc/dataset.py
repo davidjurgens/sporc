@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 _PODCAST_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _EPISODE_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
+# Concurrent downloads used by prefetch(). Prefetching is latency-bound -- four
+# small files per podcast -- so fetching one podcast at a time leaves the link
+# idle and makes prefetching a few hundred podcasts take tens of minutes.
+# Bounded well below what the Hub would rate-limit.
+_PREFETCH_WORKERS = 16
+
 
 def _normalize_subset(subset: Any) -> Dict[str, List[str]]:
     """
@@ -337,10 +343,36 @@ class SPORCDataset:
                 "(first few: %s)", len(unresolved), unresolved[:5],
             )
 
+        from .source import HubDataSource
+
+        # Prefetching a local directory is a silent no-op that reports
+        # "files: 0", which reads like an empty subset rather than a source that
+        # cannot fetch. Say so.
+        if not isinstance(getattr(backend, "_source", None), HubDataSource):
+            logger.warning(
+                "prefetch() has nothing to fetch: this dataset reads a local "
+                "directory (parquet_dir=...), which never downloads. Data "
+                "absent from it stays absent. Omit parquet_dir to fetch from "
+                "HuggingFace."
+            )
+
         logger.info("Prefetching data for %d podcast(s)...", len(pids))
+
+        # Each podcast is four small files and the cost is entirely network
+        # latency, so fetching them one podcast at a time leaves the link idle.
+        # Threads are the right tool here: hf_hub_download releases the GIL on
+        # I/O, and the source's own bookkeeping is only touched under it.
         files = 0
-        for pid in pids:
-            files += sum(backend.ensure_podcast_data(pid).values())
+        if len(pids) > 1 and _PREFETCH_WORKERS > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
+                for got in pool.map(
+                        lambda p: sum(backend.ensure_podcast_data(p).values()),
+                        pids):
+                    files += got
+        else:
+            for pid in pids:
+                files += sum(backend.ensure_podcast_data(pid).values())
 
         logger.info("Prefetch complete: %d podcast(s), %d file(s)", len(pids), files)
         return {"podcasts": len(pids), "files": files, "unresolved": unresolved}

@@ -13,6 +13,8 @@ import os
 import pickle
 import re
 import time
+import warnings
+from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
 
 import pyarrow as pa
@@ -30,6 +32,11 @@ logger = logging.getLogger(__name__)
 # Version tag embedded in the cache so that code changes automatically
 # invalidate stale caches.
 _CACHE_VERSION = 3
+
+# Podcast episode-partitions held in memory. Small, because the partitions carry
+# full transcripts; enough, because access is podcast-ordered -- iterating a
+# podcast's episodes only needs its own partition resident.
+_EPISODE_PARTITION_CACHE_SIZE = 8
 
 
 class ParquetBackend:
@@ -54,6 +61,9 @@ class ParquetBackend:
         # Resolves per-podcast partitions. A HubDataSource fetches them on
         # demand; the default reads whatever is already on disk.
         self._source = source if source is not None else LocalDataSource(data_dir)
+        # podcast_id -> parsed episode rows; see _read_podcast_episodes_partition.
+        self._episode_partition_cache: "OrderedDict[str, List[Dict[str, Any]]]" = \
+            OrderedDict()
 
         if not os.path.isdir(self._meta_dir):
             raise DatasetAccessError(
@@ -780,14 +790,37 @@ class ParquetBackend:
         return row.to_dict()
 
     def _read_podcast_episodes_partition(self, podcast_id: str) -> List[Dict[str, Any]]:
-        """Read the per-podcast episode partition file (includes transcripts)."""
+        """
+        Read the per-podcast episode partition file (includes transcripts).
+
+        Cached, because the natural access pattern hammers it: every
+        ``build_episode_object`` call re-reads the whole partition -- transcripts
+        and all -- to find one episode, so iterating a podcast's N episodes
+        parsed the same file N times. Iteration is podcast-ordered, so even a
+        small cache turns that back into one read per podcast.
+        """
+        cached = self._episode_partition_cache.get(podcast_id)
+        if cached is not None:
+            self._episode_partition_cache.move_to_end(podcast_id)
+            return cached
+
         path = self._source.path(
             f"episodes/podcast_id={podcast_id}/data.parquet"
         )
         if path is None:
-            return []
-        table = pq.ParquetFile(path).read()
-        return table.to_pandas().to_dict(orient="records")
+            rows: List[Dict[str, Any]] = []
+        else:
+            # ParquetFile(...).read(), not pq.read_table(path): the latter infers
+            # hive partitioning from the podcast_id=<id> parent directory and
+            # then collides with the file's own podcast_id column.
+            rows = pq.ParquetFile(path).read().to_pandas().to_dict(orient="records")
+
+        self._episode_partition_cache[podcast_id] = rows
+        # Partitions carry full transcripts, so this is bounded by podcast count
+        # rather than left to grow over a whole-corpus pass.
+        while len(self._episode_partition_cache) > _EPISODE_PARTITION_CACHE_SIZE:
+            self._episode_partition_cache.popitem(last=False)
+        return rows
 
     def _episode_dict_to_object(
         self, erow: Dict[str, Any], pinfo: Dict[str, Any]
@@ -1309,7 +1342,33 @@ class ParquetBackend:
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Find episodes featuring a speaker by name.
+        Find episodes where a name was predicted as host or guest.
+
+        .. warning::
+            ``role="guest"`` finds episodes where the name was **predicted** as a
+            guest, which is not the same as episodes the person appeared on. The
+            underlying ``guest_predicted_names`` is extracted from text and
+            cannot distinguish "we're joined by X" from "let's talk about X", so
+            people who were merely discussed are returned as guests.
+
+            The effect is large, not marginal. Validating every cross-podcast
+            guest in SPoRC against ``guest_speaker_labels`` (i.e. requiring that
+            the person was actually diarized) leaves **940 of 37,275 names —
+            2.5%**. George Floyd is listed as a guest on 237 podcasts in
+            May–June 2020 and appeared on none of them.
+
+            To keep only real appearances, check that the name is a key of the
+            episode's ``guest_speaker_labels``::
+
+                hits = sporc.search_by_speaker_name("Jane Smith", role="guest")
+                for h in hits:
+                    ep = sporc._parquet_backend.build_episode_object(
+                        h["podcast_id"], h["episode_id"])
+                    if "jane smith" in {k.lower() for k in ep.guest_speaker_labels}:
+                        ...   # she actually spoke
+
+            That check removes ~98% of the artefact but not all of it: name
+            attribution occasionally pins a mentioned name onto a real speaker.
 
         Args:
             name: Speaker name to search for.
@@ -1322,6 +1381,17 @@ class ParquetBackend:
         """
         self._ensure_speaker_index()
         df = self._speaker_index_df
+
+        if role and role.lower() == "guest":
+            warnings.warn(
+                "search_by_speaker_name(role='guest') returns episodes where a "
+                "name was predicted as a guest, including people who were only "
+                "mentioned. Corpus-wide, only ~2.5% of cross-podcast 'guests' "
+                "were actually diarized. Validate hits against the episode's "
+                "guest_speaker_labels before treating them as appearances.",
+                UserWarning,
+                stacklevel=3,
+            )
 
         name_lower = name.lower().strip()
 
@@ -1582,9 +1652,20 @@ class ParquetBackend:
         occurrence: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """
-        Estimate audio time range for a word in a turn.
+        Estimate the audio time range of a word by interpolating its character
+        offset within the turn.
 
-        Uses character offset and speaking rate for approximate timing.
+        .. deprecated:: 1.1
+            This is a text heuristic, not acoustic alignment. It assumes every
+            character takes equally long to say, so its error grows with turn
+            length -- in a 60-second turn it can be seconds out, which is orders
+            of magnitude more than a word lasts. ``confidence`` is a function of
+            turn duration alone (``10 / turn_duration``) and reflects no
+            property of the audio. Use :func:`sporc.phonetics.align_turn` for
+            real, audio-derived word timings.
+
+            It remains useful for rough navigation ("roughly where in this
+            episode is this word said?"), which needs no audio and no model.
 
         Args:
             podcast_id: The podcast partition key.
@@ -1597,6 +1678,15 @@ class ParquetBackend:
             turn_start, turn_end, turn_text, confidence.
             None if the word is not found.
         """
+        warnings.warn(
+            "estimate_word_audio() interpolates word timing from character "
+            "offsets and is not acoustic alignment; its error grows with turn "
+            "length and its 'confidence' is derived from turn duration alone. "
+            "For real word timings use sporc.phonetics.align_turn(). This "
+            "method remains valid only for rough navigation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         turns = self.get_turns_for_episode(podcast_id, episode_id)
         if not turns:
             return None

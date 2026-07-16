@@ -55,7 +55,26 @@ def build_speaker_name_index(data_dir: str) -> None:
     ec_path = os.path.join(meta_dir, "episode_catalog.parquet")
     out_path = os.path.join(meta_dir, "speaker_name_index.parquet")
 
+    # KNOWN LIMITATION -- the guest rows of this index are not appearances.
+    #
+    # `guest_predicted_names` is extracted from episode text and cannot tell
+    # "we're joined today by X" from "let's talk about what happened to X", so
+    # people who were only discussed land here as guests. Validating every
+    # cross-podcast guest in SPoRC against `guest_speaker_labels` (i.e. that the
+    # person was actually diarized) leaves 940 of 37,275 names -- 2.5%. George
+    # Floyd is indexed as a guest on 237 podcasts and appeared on none.
+    #
+    # Fixing this properly means carrying a `spoke` flag derived from
+    # `guest_speaker_labels`, which lives in the episode partitions rather than
+    # the catalog -- so it needs a pass over episodes/, like Phase 2 does for
+    # turns/. Until then, consumers must validate hits themselves;
+    # ParquetBackend.search_by_speaker_name() warns about it.
     logger.info("Phase 1: Building speaker name index from %s", ec_path)
+    logger.warning(
+        "Guest rows in this index are PREDICTED names, not verified "
+        "appearances: ~97.5%% of cross-podcast 'guests' were never diarized. "
+        "See the comment above _build_speaker_index."
+    )
     start = time.time()
 
     table = pq.read_table(
