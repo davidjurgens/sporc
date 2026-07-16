@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Local data. Subsets are built, not tracked: scripts/build_tutorial_subset.py
+# reproduces subsets/tutorial from the pinned ids, and the layout itself runs to
+# hundreds of MB.
+subsets/
+sporc_parquet/
+
+# Agent scratch file; see the note in the repo's contributing docs.
+CLAUDE.md
