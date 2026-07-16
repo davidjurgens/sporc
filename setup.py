@@ -6,12 +6,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="sporc",
     version="1.0.0",
-    author="SPORC Package Maintainer",
-    author_email="maintainer@example.com",
+    author="David Jurgens",
+    author_email="jurgens@umich.edu",
     description="A Python package for working with the SPORC (Structured Podcast Open Research Corpus) dataset",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/sporc",
+    url="https://github.com/davidjurgens/sporc",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -58,8 +58,8 @@ setup(
     },
     keywords="podcast, audio, nlp, research, dataset, huggingface, streaming",
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/sporc/issues",
-        "Source": "https://github.com/yourusername/sporc",
-        "Documentation": "https://github.com/yourusername/sporc/wiki",
+        "Bug Reports": "https://github.com/davidjurgens/sporc/issues",
+        "Source": "https://github.com/davidjurgens/sporc",
+        "Documentation": "https://github.com/davidjurgens/sporc/wiki",
     },
 )

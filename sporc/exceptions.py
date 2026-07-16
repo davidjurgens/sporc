@@ -36,3 +36,14 @@ class ConfigurationError(SPORCError):
 class IndexNotBuiltError(SPORCError):
     """Raised when a precomputed index is required but has not been built yet."""
     pass
+
+
+class DataNotLocalError(SPORCError):
+    """
+    Raised when data is needed that is not present locally and downloading is
+    disabled (``allow_downloads=False``).
+
+    The data may well exist in the dataset; this says only that fetching it was
+    not permitted, and is deliberately distinct from :class:`NotFoundError`.
+    """
+    pass

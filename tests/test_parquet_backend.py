@@ -539,7 +539,7 @@ class TestGetTurnMetrics:
     """Tests for get_turn_metrics method."""
 
     def test_file_missing_raises_index_not_built(self, mock_parquet_backend):
-        with patch("sporc.parquet_backend.os.path.exists", return_value=False):
+        with patch("sporc.source.os.path.exists", return_value=False):
             with pytest.raises(IndexNotBuiltError):
                 mock_parquet_backend.get_turn_metrics("pod1", "ep1")
 
@@ -553,7 +553,7 @@ class TestGetTurnMetrics:
                 "word_count": [10, 5, 8],
             }
         )
-        with patch("sporc.parquet_backend.os.path.exists", return_value=True), \
+        with patch("sporc.source.os.path.exists", return_value=True), \
              patch("sporc.parquet_backend.pq.read_table", return_value=table):
             results = mock_parquet_backend.get_turn_metrics("pod1", "ep1")
             assert len(results) == 3
@@ -571,7 +571,7 @@ class TestGetTurnMetrics:
                 "word_count": [10, 5],
             }
         )
-        with patch("sporc.parquet_backend.os.path.exists", return_value=True), \
+        with patch("sporc.source.os.path.exists", return_value=True), \
              patch("sporc.parquet_backend.pq.read_table", return_value=table):
             results = mock_parquet_backend.get_turn_metrics("pod1", "ep999")
             assert results == []

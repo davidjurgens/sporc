@@ -2,8 +2,10 @@
 """
 Convert SPORC JSONL.gz data to partitioned Parquet layout.
 
-Reads from local HF cache at /shared/4/models/datasets--blitt--SPoRC/
-and writes to /shared/6/projects/sporc/v1/.
+Reads the legacy jsonlines exports (episodeLevelData.jsonl.gz and
+speakerTurnData.jsonl.gz) and writes the partitioned Parquet layout. Pass
+--input-dir to use an existing copy of the jsonlines files; otherwise they are
+fetched from HuggingFace (~23 GB).
 
 Three phases:
   1. Episode pass: build podcast/episode catalogs + per-podcast episode files
@@ -40,8 +42,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_HF_CACHE = "/shared/4/models/datasets--blitt--SPoRC/snapshots/96b66034f70dee2bdb8cd1ad44bc3cffa3e0d922"
-DEFAULT_OUTPUT_DIR = "/shared/6/projects/sporc/v1"
+DATASET_ID = "blitt/SPoRC"
+# Source jsonlines files. Resolved from the HuggingFace cache at runtime unless
+# --input-dir is given; hardcoding a snapshot hash goes stale as soon as the
+# cache is pruned or the repo is revised.
+SOURCE_PATTERNS = ["episodeLevelData.jsonl.gz", "speakerTurnData.jsonl.gz"]
+DEFAULT_OUTPUT_DIR = os.environ.get("SPORC_PARQUET_DIR", "sporc_parquet")
 
 # Buffer size for turn pass: flush when a podcast accumulates this many turns
 TURN_FLUSH_THRESHOLD = 50_000
@@ -572,8 +578,10 @@ def main():
     parser = argparse.ArgumentParser(description="Convert SPORC JSONL.gz to partitioned Parquet")
     parser.add_argument(
         "--input-dir",
-        default=DEFAULT_HF_CACHE,
-        help="Directory containing episodeLevelData.jsonl.gz and speakerTurnData.jsonl.gz",
+        default=None,
+        help="Directory containing episodeLevelData.jsonl.gz and "
+             "speakerTurnData.jsonl.gz. Defaults to downloading them from "
+             f"HuggingFace ({DATASET_ID}, ~23 GB).",
     )
     parser.add_argument(
         "--output-dir",
@@ -587,8 +595,20 @@ def main():
     )
     args = parser.parse_args()
 
-    episode_file = os.path.join(args.input_dir, "episodeLevelData.jsonl.gz")
-    turn_file = os.path.join(args.input_dir, "speakerTurnData.jsonl.gz")
+    input_dir = args.input_dir
+    if input_dir is None:
+        from huggingface_hub import snapshot_download
+
+        patterns = SOURCE_PATTERNS if not args.skip_turns else SOURCE_PATTERNS[:1]
+        logger.info("Fetching source jsonlines from %s: %s",
+                    DATASET_ID, ", ".join(patterns))
+        input_dir = snapshot_download(
+            repo_id=DATASET_ID, repo_type="dataset", allow_patterns=patterns,
+        )
+        logger.info("Source resolved to %s", input_dir)
+
+    episode_file = os.path.join(input_dir, "episodeLevelData.jsonl.gz")
+    turn_file = os.path.join(input_dir, "speakerTurnData.jsonl.gz")
 
     if not os.path.exists(episode_file):
         logger.error("Episode file not found: %s", episode_file)

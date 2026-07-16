@@ -199,6 +199,8 @@ class Episode:
     _turns: List[Turn] = field(default_factory=list, repr=False)
     _turns_loaded: bool = False
     _turn_loader: Optional[Callable] = field(default=None, repr=False)
+    _has_turn_data: Optional[bool] = field(default=None, repr=False)
+    _turn_data_check: Optional[Callable] = field(default=None, repr=False)
 
     def __post_init__(self):
         """Validate episode data after initialization."""
@@ -715,9 +717,36 @@ class Episode:
             self._turn_loader()
 
     @property
+    def has_turn_data(self) -> bool:
+        """
+        Whether the corpus contains speaker-turn data for this episode.
+
+        Turn coverage is partial: only about a third of SPoRC episodes have
+        turn data, so the rest have a transcript but no turns. An empty
+        ``turns`` list is therefore usually a gap in the corpus rather than a
+        fact about the episode. Check this before drawing conclusions from
+        empty turns.
+
+        The answer is resolved on first access and cached.
+
+        Returns:
+            False if the corpus has no turn data for this episode, else True.
+        """
+        if self._has_turn_data is None:
+            if self._turn_data_check is not None:
+                self._has_turn_data = bool(self._turn_data_check())
+            else:
+                self._has_turn_data = bool(self._turns)
+        return self._has_turn_data
+
+    @property
     def turns(self) -> List[Turn]:
         """
         Get all turns for this episode, loading them on-demand if necessary.
+
+        Returns an empty list when the podcast has no turn data in the corpus;
+        see ``has_turn_data`` to tell that case apart from a genuinely
+        turn-less episode.
 
         Returns:
             List of all Turn objects for this episode

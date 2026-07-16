@@ -8,13 +8,16 @@ Three phases:
   3. DuckDB Turn Database: full-text search index over all turn text
 
 Usage:
-    python scripts/build_indexes.py --data-dir /shared/6/projects/sporc/v1
-    python scripts/build_indexes.py --data-dir /shared/6/projects/sporc/v1 --phase 1
-    python scripts/build_indexes.py --data-dir /shared/6/projects/sporc/v1 --phase 2
-    python scripts/build_indexes.py --data-dir /shared/6/projects/sporc/v1 --phase 3
+    python scripts/build_indexes.py --data-dir /path/to/sporc_parquet
+    python scripts/build_indexes.py --data-dir /path/to/sporc_parquet --phase 1
+    python scripts/build_indexes.py --data-dir /path/to/sporc_parquet --phase 2
+    python scripts/build_indexes.py --data-dir /path/to/sporc_parquet --phase 3
+
+--data-dir defaults to $SPORC_PARQUET_DIR.
 """
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -35,7 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = "/shared/6/projects/sporc/v1"
+DEFAULT_DATA_DIR = os.environ.get("SPORC_PARQUET_DIR", "sporc_parquet")
 
 DISCOURSE_MARKERS = re.compile(
     r"\b(um|uh|uh huh|mm hmm|like|you know|i mean|so|well|right|okay|oh)\b",
@@ -435,6 +438,31 @@ def build_episode_and_turn_metrics(data_dir: str) -> None:
 # ---------------------------------------------------------------------------
 # Phase 3: DuckDB Turn Database
 # ---------------------------------------------------------------------------
+def update_manifest_layout(data_dir: str, entries: dict) -> None:
+    """
+    Record artifacts built here in manifest.json.
+
+    convert_to_parquet.py writes the manifest but knows nothing about the
+    indexes built by this script, so each phase registers its own outputs
+    rather than leaving the manifest describing a subset of the layout.
+    """
+    path = os.path.join(data_dir, "manifest.json")
+    try:
+        with open(path) as f:
+            manifest = json.load(f)
+    except (OSError, ValueError) as e:
+        logger.warning("Could not read manifest at %s (%s); not updating", path, e)
+        return
+
+    manifest.setdefault("layout", {}).update(entries)
+    try:
+        with open(path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        logger.info("Manifest layout updated: %s", ", ".join(entries))
+    except OSError as e:
+        logger.warning("Could not write manifest at %s: %s", path, e)
+
+
 def build_duckdb_search(data_dir: str) -> None:
     """Build metadata/turns_search.duckdb with FTS index."""
     try:
@@ -584,12 +612,26 @@ def main():
 
     if args.phase is None or args.phase == 1:
         build_speaker_name_index(data_dir)
+        update_manifest_layout(data_dir, {
+            "metadata/speaker_name_index.parquet":
+                "Speaker name -> episode lookup index",
+        })
 
     if args.phase is None or args.phase == 2:
         build_episode_and_turn_metrics(data_dir)
+        update_manifest_layout(data_dir, {
+            "metadata/episode_metrics.parquet":
+                "Precomputed episode-level aggregate metrics",
+            "turns/podcast_id=<id>/metrics.parquet":
+                "Precomputed turn-level metrics",
+        })
 
     if args.phase is None or args.phase == 3:
         build_duckdb_search(data_dir)
+        update_manifest_layout(data_dir, {
+            "metadata/turns_search.duckdb":
+                "DuckDB full-text search index over turn text",
+        })
 
     elapsed = time.time() - overall_start
     logger.info("All phases complete in %.1fs", elapsed)

@@ -8,7 +8,15 @@ from .dataset import SPORCDataset
 from .podcast import Podcast
 from .episode import Episode, TimeRangeBehavior
 from .turn import Turn
-from .exceptions import SPORCError, DatasetAccessError, AuthenticationError, IndexNotBuiltError, NotFoundError
+from .exceptions import (
+    SPORCError,
+    DatasetAccessError,
+    AuthenticationError,
+    IndexNotBuiltError,
+    NotFoundError,
+    DataNotLocalError,
+)
+from .source import DataSource, LocalDataSource, HubDataSource
 from .constants import (
     APPLE_PODCAST_CATEGORIES,
     ALL_CATEGORIES,
@@ -50,6 +58,11 @@ __all__ = [
     "AuthenticationError",
     "IndexNotBuiltError",
     "NotFoundError",
+    "DataNotLocalError",
+    # Data sources
+    "DataSource",
+    "LocalDataSource",
+    "HubDataSource",
     # Constants
     "APPLE_PODCAST_CATEGORIES",
     "ALL_CATEGORIES",

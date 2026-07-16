@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from sporc.dataset import SPORCDataset
 from sporc.exceptions import SPORCError, IndexNotBuiltError
+from sporc.source import HubDataSource
 
 
 def _make_dataset():
@@ -25,44 +26,121 @@ def _make_dataset():
 class TestInit:
     """Tests for __init__ download logic."""
 
+    # -- lazy path (the default): metadata up front, partitions on demand ----
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_lazy_downloads_metadata_only(self, mock_dl, mock_backend):
+        """By default only the catalogs are fetched, not the ~57GB of partitions."""
+        SPORCDataset()
+        got = [c.kwargs["filename"] for c in mock_dl.call_args_list]
+        assert got == SPORCDataset._CORE_METADATA + SPORCDataset._OPTIONAL_METADATA
+        # No partition or legacy file is touched at load time.
+        assert not any(f.startswith(("episodes/", "turns/")) for f in got)
+        assert not any(f.endswith(".jsonl.gz") for f in got)
+        assert "metadata/turns_search.duckdb" not in got
+        assert mock_backend.call_args.args[0] == "/fake/cache/dir"
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_lazy_never_enumerates_repo(self, mock_dl, mock_snapshot, mock_backend):
+        """snapshot_download is avoided: it lists all ~685k files, which takes hours."""
+        SPORCDataset()
+        mock_snapshot.assert_not_called()
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_lazy_builds_hub_source(self, mock_dl, mock_backend):
+        """The backend gets a HubDataSource so partitions can be fetched later."""
+        SPORCDataset(use_auth_token="hf_TOKEN", cache_dir="/custom/cache")
+        source = mock_backend.call_args.kwargs["source"]
+        assert isinstance(source, HubDataSource)
+        assert source.repo_id == "blitt/SPoRC"
+        assert source.token == "hf_TOKEN"
+        assert source.allow_downloads is True
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_allow_downloads_false_pins_source(self, mock_dl, mock_backend):
+        """allow_downloads=False is passed through to the source."""
+        SPORCDataset(allow_downloads=False)
+        assert mock_backend.call_args.kwargs["source"].allow_downloads is False
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_lazy_with_search_db_fetches_it(self, mock_dl, mock_backend):
+        """include_search_db pulls the search DB alongside the catalogs."""
+        SPORCDataset(include_search_db=True)
+        got = [c.kwargs["filename"] for c in mock_dl.call_args_list]
+        assert "metadata/turns_search.duckdb" in got
+
+    @patch("sporc.dataset.SPORCDataset.prefetch")
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_subset_triggers_prefetch(self, mock_dl, mock_backend, mock_prefetch):
+        """A subset= argument is prefetched at load time."""
+        SPORCDataset(subset=["03b0f2a257fd"])
+        mock_prefetch.assert_called_once_with(["03b0f2a257fd"])
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.hf_hub_download", side_effect=lambda filename, **kw: f"/fake/cache/dir/{filename}")
+    def test_no_subset_no_prefetch(self, mock_dl, mock_backend):
+        """Without subset=, nothing is prefetched."""
+        with patch.object(SPORCDataset, "prefetch") as mock_prefetch:
+            SPORCDataset()
+            mock_prefetch.assert_not_called()
+
+    # -- eager path: lazy=False downloads the whole corpus ------------------
+
     @patch("sporc.parquet_backend.ParquetBackend")
     @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
-    def test_snapshot_download_called_when_no_parquet_dir(self, mock_download, mock_backend):
-        """snapshot_download is called when parquet_dir is None."""
-        ds = SPORCDataset()
+    def test_eager_excludes_legacy_and_search_db(self, mock_download, mock_backend):
+        """lazy=False downloads everything except legacy exports and the search DB."""
+        SPORCDataset(lazy=False)
         mock_download.assert_called_once_with(
             repo_id="blitt/SPoRC",
             repo_type="dataset",
             token=None,
             cache_dir=None,
+            ignore_patterns=["*.jsonl.gz", "metadata/turns_search.duckdb"],
         )
-        mock_backend.assert_called_once_with("/fake/cache/dir")
+        # No lazy source: everything is already on disk.
+        assert mock_backend.call_args.kwargs["source"] is None
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
+    def test_eager_legacy_jsonlines_never_downloaded(self, mock_download, mock_backend):
+        """The unused pre-1.0 jsonlines exports (~23GB) are always excluded."""
+        SPORCDataset(lazy=False)
+        assert "*.jsonl.gz" in mock_download.call_args.kwargs["ignore_patterns"]
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
+    def test_eager_search_db_included_on_request(self, mock_download, mock_backend):
+        """include_search_db=True opts in but still skips legacy files."""
+        SPORCDataset(lazy=False, include_search_db=True)
+        patterns = mock_download.call_args.kwargs["ignore_patterns"]
+        assert "metadata/turns_search.duckdb" not in patterns
+        assert "*.jsonl.gz" in patterns
+
+    @patch("sporc.parquet_backend.ParquetBackend")
+    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
+    def test_eager_ignore_patterns_override(self, mock_download, mock_backend):
+        """An explicit ignore_patterns replaces the defaults."""
+        SPORCDataset(lazy=False, ignore_patterns=["nothing/*"])
+        assert mock_download.call_args.kwargs["ignore_patterns"] == ["nothing/*"]
+
+    # -- local path: never downloads ---------------------------------------
 
     @patch("sporc.parquet_backend.ParquetBackend")
     @patch("huggingface_hub.snapshot_download")
     def test_snapshot_download_not_called_when_parquet_dir_provided(self, mock_download, mock_backend):
         """snapshot_download is NOT called when parquet_dir is given."""
-        ds = SPORCDataset(parquet_dir="/my/local/dir")
+        SPORCDataset(parquet_dir="/my/local/dir")
         mock_download.assert_not_called()
-        mock_backend.assert_called_once_with("/my/local/dir")
-
-    @patch("sporc.parquet_backend.ParquetBackend")
-    @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
-    def test_auth_token_and_cache_dir_passed_through(self, mock_download, mock_backend):
-        """use_auth_token and cache_dir are passed to snapshot_download."""
-        ds = SPORCDataset(use_auth_token="hf_TOKEN", cache_dir="/custom/cache")
-        mock_download.assert_called_once_with(
-            repo_id="blitt/SPoRC",
-            repo_type="dataset",
-            token="hf_TOKEN",
-            cache_dir="/custom/cache",
-        )
-
-
-# ===================================================================
-# Wrapper Delegation
-# ===================================================================
-
+        assert mock_backend.call_args.args[0] == "/my/local/dir"
+        assert mock_backend.call_args.kwargs["source"] is None
 
 class TestWrapperDelegation:
     """Tests that each wrapper delegates to the backend with exact args."""

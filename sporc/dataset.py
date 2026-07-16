@@ -2,8 +2,11 @@
 Main dataset class for working with the SPORC dataset.
 """
 
+import json
 import logging
+import os
 import random
+import re
 from typing import List, Dict, Any, Optional, Iterator
 
 from .podcast import Podcast
@@ -20,6 +23,67 @@ from .exceptions import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Ids are fixed-width md5 prefixes (see the dataset manifest), which lets a bare
+# list of strings be sorted into ids and titles without the caller labelling it.
+_PODCAST_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+_EPISODE_ID_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _normalize_subset(subset: Any) -> Dict[str, List[str]]:
+    """
+    Turn a subset spec into ``{podcast_ids, podcast_titles, episode_ids}``.
+
+    Accepts a dict with any of those keys, a list of ids/titles, a single
+    string, or a path to a ``.json`` or newline-delimited text file holding
+    either. Bare strings are classified by shape: 12 hex chars is a podcast id,
+    16 hex chars an episode id, anything else a podcast title.
+    """
+    if isinstance(subset, (str, os.PathLike)) and os.path.exists(subset):
+        with open(subset) as f:
+            text = f.read()
+        if str(subset).endswith(".json"):
+            subset = json.loads(text)
+        else:
+            subset = [
+                line.strip() for line in text.splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+
+    if isinstance(subset, str):
+        subset = [subset]
+
+    empty: Dict[str, List[str]] = {
+        "podcast_ids": [], "podcast_titles": [], "episode_ids": [],
+    }
+
+    if isinstance(subset, dict):
+        unknown = set(subset) - set(empty)
+        if unknown:
+            raise ValueError(
+                f"Unknown subset keys: {sorted(unknown)}. "
+                f"Expected any of {sorted(empty)}."
+            )
+        return {k: [str(v) for v in subset.get(k, [])] for k in empty}
+
+    if isinstance(subset, (list, tuple, set)):
+        out = dict(empty)
+        for item in subset:
+            s = str(item).strip()
+            if not s:
+                continue
+            if _PODCAST_ID_RE.match(s):
+                out["podcast_ids"].append(s)
+            elif _EPISODE_ID_RE.match(s):
+                out["episode_ids"].append(s)
+            else:
+                out["podcast_titles"].append(s)
+        return out
+
+    raise ValueError(
+        f"Unsupported subset spec of type {type(subset).__name__}. Pass a dict, "
+        "a list of ids/titles, or a path to a .json or .txt file."
+    )
+
 
 class SPORCDataset:
     """
@@ -29,40 +93,257 @@ class SPORCDataset:
     various search and filtering capabilities for podcasts and episodes.
 
     All operations use the Parquet backend for fast O(1) lookups. If no local
-    ``parquet_dir`` is given, the parquet files are automatically downloaded
-    from HuggingFace using ``huggingface_hub.snapshot_download()``.
+    ``parquet_dir`` is given, data comes from HuggingFace: the metadata catalogs
+    are downloaded up front (~195 MB) and each podcast's partitions are fetched
+    the first time they are touched, so only the data actually used is
+    transferred. See ``__init__`` for pinning a run to a fixed subset or
+    disabling downloads entirely.
+
+    Example:
+        >>> sporc = SPORCDataset(subset=["Radiolab"], allow_downloads=False)
+        >>> podcast = sporc.search_podcast("Radiolab")
     """
 
     DATASET_ID = "blitt/SPoRC"
 
+    # Pre-1.0 jsonlines exports. Still hosted on HuggingFace (~23 GB) but never
+    # read by this package, which is Parquet-only.
+    _LEGACY_PATTERNS = ["*.jsonl.gz"]
+
+    # Full-text search index (~26 GB). Only needed by search_turns(),
+    # search_episodes_by_text() and concordance(), so it is opt-in.
+    _SEARCH_DB_PATTERN = "metadata/turns_search.duckdb"
+
+    # Catalogs needed before anything can be looked up. Listed explicitly rather
+    # than globbed: snapshot_download(allow_patterns=...) still enumerates all
+    # ~685k files in the repo to match them, which takes hours, whereas fetching
+    # known names directly costs one request each.
+    _CORE_METADATA = [
+        "manifest.json",
+        "metadata/podcast_catalog.parquet",
+        "metadata/episode_catalog.parquet",
+        "metadata/category_index.parquet",
+        "metadata/hostname_index.parquet",
+    ]
+
+    # Built by scripts/build_indexes.py. Absent from older revisions of the
+    # dataset, in which case the features that need them raise on use.
+    _OPTIONAL_METADATA = [
+        "metadata/speaker_name_index.parquet",
+        "metadata/episode_metrics.parquet",
+    ]
+
+    @classmethod
+    def _download_metadata(cls, token: Optional[str], cache_dir: Optional[str],
+                           include_search_db: bool) -> str:
+        """
+        Fetch the metadata catalogs and return the snapshot directory holding
+        them.
+
+        Returns:
+            Local snapshot root that repo-relative paths resolve against.
+
+        Raises:
+            DatasetAccessError: if a catalog the package cannot work without is
+                missing from the dataset.
+        """
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.errors import EntryNotFoundError
+
+        wanted = list(cls._CORE_METADATA) + list(cls._OPTIONAL_METADATA)
+        if include_search_db:
+            wanted.append(cls._SEARCH_DB_PATTERN)
+
+        root = None
+        for rel in wanted:
+            try:
+                path = hf_hub_download(
+                    repo_id=cls.DATASET_ID, repo_type="dataset", filename=rel,
+                    token=token, cache_dir=cache_dir,
+                )
+            except EntryNotFoundError:
+                if rel in cls._CORE_METADATA:
+                    raise DatasetAccessError(
+                        f"{cls.DATASET_ID} is missing required metadata file "
+                        f"{rel!r}. The dataset layout may have changed."
+                    )
+                logger.warning(
+                    "Optional index %s is not in the dataset; features that "
+                    "need it will raise IndexNotBuiltError.", rel,
+                )
+                continue
+            if rel == "manifest.json":
+                root = os.path.dirname(path)
+
+        if root is None:
+            raise DatasetAccessError(
+                f"Could not locate manifest.json in {cls.DATASET_ID}."
+            )
+        return root
+
     def __init__(self, parquet_dir: Optional[str] = None,
                  use_auth_token: Optional[str] = None,
-                 cache_dir: Optional[str] = None):
+                 cache_dir: Optional[str] = None,
+                 lazy: bool = True,
+                 subset: Optional[Any] = None,
+                 allow_downloads: bool = True,
+                 include_search_db: bool = False,
+                 ignore_patterns: Optional[List[str]] = None):
         """
         Initialize the SPORC dataset.
 
+        By default only the metadata catalogs are downloaded (~195 MB) and
+        per-podcast data is fetched as it is touched. The layout is partitioned
+        by podcast, so working with a handful of podcasts costs a handful of
+        small files rather than the whole ~57 GB corpus.
+
         Args:
             parquet_dir: Directory containing the partitioned Parquet layout.
-                         If None, downloads from HuggingFace automatically.
-            use_auth_token: Hugging Face token for authentication.
-                            If None, uses cached credentials.
-            cache_dir: Directory to cache the downloaded dataset.
-                       If None, uses the default HuggingFace cache location.
+                         If given, nothing is ever downloaded.
+                         If None, data comes from HuggingFace.
+            use_auth_token: Hugging Face token. If None, uses cached credentials.
+            cache_dir: HuggingFace cache location. If None, uses the default.
+            lazy: Fetch per-podcast partitions on demand (default). Set False to
+                  download the whole corpus up front (~31 GB, ~685k files).
+            subset: Data to fetch up front, so that later access needs no
+                    network. Accepts a list of podcast ids or titles, a dict
+                    with ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``
+                    keys, or a path to a JSON or newline-delimited text file
+                    holding either.
+            allow_downloads: When False, never fetch anything beyond what is
+                             already local; requests for absent data raise
+                             ``DataNotLocalError``. Combine with ``subset`` to
+                             pin a run to an exact slice of the corpus.
+            include_search_db: Download the ~26 GB full-text search database,
+                               needed by search_turns(),
+                               search_episodes_by_text() and concordance().
+            ignore_patterns: Override download exclusions for the non-lazy path.
+                             Passed through to ``snapshot_download``.
+
+        Raises:
+            ValueError: if ``subset`` is given without any resolvable entries.
         """
+        source = None
+
         if parquet_dir is None:
-            from huggingface_hub import snapshot_download
-            logger.info("Downloading SPORC parquet data from HuggingFace...")
-            parquet_dir = snapshot_download(
-                repo_id=self.DATASET_ID,
-                repo_type="dataset",
-                token=use_auth_token,
-                cache_dir=cache_dir,
-            )
+            if lazy:
+                logger.info("Downloading SPORC metadata catalogs (~195 MB)...")
+                parquet_dir = self._download_metadata(
+                    token=use_auth_token, cache_dir=cache_dir,
+                    include_search_db=include_search_db,
+                )
+                from .source import HubDataSource
+                source = HubDataSource(
+                    repo_id=self.DATASET_ID,
+                    root=parquet_dir,
+                    token=use_auth_token,
+                    cache_dir=cache_dir,
+                    allow_downloads=allow_downloads,
+                )
+            else:
+                from huggingface_hub import snapshot_download
+
+                if ignore_patterns is None:
+                    ignore_patterns = list(self._LEGACY_PATTERNS)
+                    if not include_search_db:
+                        ignore_patterns.append(self._SEARCH_DB_PATTERN)
+                logger.info(
+                    "Downloading the full SPORC corpus from HuggingFace "
+                    "(this is large and may take a while; excluding: %s)",
+                    ", ".join(ignore_patterns) or "nothing",
+                )
+                parquet_dir = snapshot_download(
+                    repo_id=self.DATASET_ID,
+                    repo_type="dataset",
+                    token=use_auth_token,
+                    cache_dir=cache_dir,
+                    ignore_patterns=ignore_patterns,
+                )
 
         from .parquet_backend import ParquetBackend
         logger.info("Initializing Parquet backend from %s", parquet_dir)
-        self._parquet_backend = ParquetBackend(parquet_dir)
+        self._parquet_backend = ParquetBackend(parquet_dir, source=source)
         self._loaded = True
+
+        if subset is not None:
+            self.prefetch(subset)
+
+    # ------------------------------------------------------------------
+    # Prefetching
+    # ------------------------------------------------------------------
+
+    def prefetch(self, subset: Any) -> Dict[str, Any]:
+        """
+        Download the data for a subset of the corpus up front.
+
+        Resolves the subset to podcasts and fetches their partitions, so later
+        access to them needs no network. Runs even when the dataset was created
+        with ``allow_downloads=False``: pinning a run to a slice of the corpus
+        means fetching that slice and nothing else.
+
+        Args:
+            subset: A list of podcast ids/titles or episode ids, a dict with
+                    ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``, or a
+                    path to a JSON or newline-delimited file holding either.
+
+        Returns:
+            Dict with ``podcasts`` (count resolved), ``files`` (count now
+            available locally) and ``unresolved`` (entries not found).
+
+        Raises:
+            ValueError: if the subset resolves to no podcasts at all.
+        """
+        spec = _normalize_subset(subset)
+        backend = self._parquet_backend
+
+        pids: List[str] = []
+        unresolved: List[str] = []
+
+        # Checked against the catalog rather than trusted: a subset file is
+        # hand-written, and a typo'd id should be reported, not silently fetched
+        # as a 404.
+        for pid in spec["podcast_ids"]:
+            if backend.has_podcast(pid):
+                pids.append(pid)
+            else:
+                unresolved.append(pid)
+
+        for title in spec["podcast_titles"]:
+            try:
+                pids.append(backend.get_podcast_by_name(title)["podcast_id"])
+            except NotFoundError:
+                unresolved.append(title)
+
+        for eid in spec["episode_ids"]:
+            row = backend.get_episode_by_id(eid)
+            if row is None:
+                unresolved.append(eid)
+            else:
+                pids.append(str(row["podcast_id"]))
+
+        # Preserve caller order but drop repeats (several episodes often share
+        # a podcast, and its partitions only need fetching once).
+        pids = list(dict.fromkeys(pids))
+
+        if not pids:
+            raise ValueError(
+                "subset resolved to no podcasts. Unresolved entries: "
+                f"{unresolved[:10]}"
+            )
+
+        if unresolved:
+            logger.warning(
+                "subset: %d entries could not be resolved and were skipped "
+                "(first few: %s)", len(unresolved), unresolved[:5],
+            )
+
+        logger.info("Prefetching data for %d podcast(s)...", len(pids))
+        files = 0
+        for pid in pids:
+            files += sum(backend.ensure_podcast_data(pid).values())
+
+        logger.info("Prefetch complete: %d podcast(s), %d file(s)", len(pids), files)
+        return {"podcasts": len(pids), "files": files, "unresolved": unresolved}
 
     # ------------------------------------------------------------------
     # Public search / retrieval API
@@ -104,22 +385,32 @@ class SPORCDataset:
 
         Returns:
             List of episodes matching the criteria
+
+        Note:
+            Matching happens in the metadata catalog, but building each Episode
+            reads that podcast's partition. Pass ``max_episodes`` to bound the
+            work: a bare category search matches tens of thousands of episodes
+            across thousands of podcasts.
         """
         rows = self._parquet_backend.search_episodes(**criteria)
+
+        # Cut the candidate rows down before building anything: each build
+        # reads (and on a lazy source, downloads) a partition, so applying the
+        # limit afterwards would fetch ~1 GB to return ten episodes.
+        if max_episodes is not None and sampling_mode != "first":
+            rows = random.sample(rows, len(rows))
+
         episodes = []
         for row in rows:
-            pid = row.get("podcast_id", "")
-            eid = row.get("episode_id", "")
+            if max_episodes is not None and len(episodes) >= max_episodes:
+                break
             try:
-                ep = self._parquet_backend.build_episode_object(pid, eid)
+                ep = self._parquet_backend.build_episode_object(
+                    row.get("podcast_id", ""), row.get("episode_id", ""),
+                )
                 episodes.append(ep)
             except Exception as e:
                 logger.debug("Skipping episode during search: %s", e)
-        if max_episodes and len(episodes) > max_episodes:
-            if sampling_mode == "first":
-                episodes = episodes[:max_episodes]
-            else:
-                episodes = random.sample(episodes, max_episodes)
         return episodes
 
     def search_episodes_by_subcategory(self, subcategory: str,
@@ -164,7 +455,7 @@ class SPORCDataset:
         Returns:
             List of all Podcast objects
         """
-        podcast_ids = self._parquet_backend._podcast_df["podcast_id"].tolist()
+        podcast_ids = self._parquet_backend.get_all_podcast_ids()
         podcasts = []
         for pid in podcast_ids:
             try:
@@ -225,7 +516,7 @@ class SPORCDataset:
             max_podcasts: Maximum number of podcasts to yield (None for all)
             sampling_mode: How to sample podcasts ("first" or "random")
         """
-        podcast_ids = self._parquet_backend._podcast_df["podcast_id"].tolist()
+        podcast_ids = self._parquet_backend.get_all_podcast_ids()
         if max_podcasts and len(podcast_ids) > max_podcasts:
             if sampling_mode == "first":
                 podcast_ids = podcast_ids[:max_podcasts]
