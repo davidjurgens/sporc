@@ -1,6 +1,6 @@
 # SPoRC tutorial notebooks
 
-Seven short tutorials built around real research questions. Each is standalone,
+Eight short tutorials built around real research questions. Each is standalone,
 but they are ordered: **01 establishes caveats the rest depend on**, so start
 there.
 
@@ -13,9 +13,10 @@ there.
 | 05 | `05_stance_over_time` | How did talk change around 25 May 2020? | nltk (vader) |
 | 06 | `06_topic_modeling_mallet` | What is podcasting about? | MALLET + Java |
 | 07 | `07_sociophonetics_caught_cot` | Does this speaker merge *caught* and *cot*? | `sporc[phonetics]` + ffmpeg |
+| 08 | `08_conversational_dynamics` | Who talks longest, and where do people overlap? | — |
 
-Notebook 07 is the one to read if you only read one: it starts from a question
-the corpus **cannot** answer and shows what to do about that.
+If you only read one, read 07. It starts from a question the corpus **cannot**
+answer and shows what to do about that.
 
 ## Setup
 
@@ -113,13 +114,31 @@ plain Python file under `src/`:
 src/nb01_cartography.py   ->   01_corpus_cartography.ipynb
 ```
 
-Edit the source, then rebuild:
+Edit the source, then rebuild, and commit both:
 
 ```bash
 python _build.py          # all
 python _build.py 07       # just one
+python _build.py --check  # are the .ipynb current with src/?
 ```
+
+Rebuilding is a no-op in git when nothing changed, so a diff on a `.ipynb` means
+a real edit. `--check` catches the case that motivated it: a source gaining a
+section that never reached the notebook, which is easy to miss and shipped once.
 
 `_viz.py` holds the shared house style. Its palette is a validated set — the hue
 *order* is what keeps it colour-vision-safe, so don't re-order it or extend past
 eight. Fold a long tail into "Other" with `fold_other()`.
+
+## Runtime
+
+Most notebooks finish in a couple of minutes. Three cost real time, and the
+reasons are worth knowing before you widen them:
+
+- **02** runs spaCy over turns. The full subset is ~13.9M words, so it samples
+  300 episodes (`N_EPISODES`).
+- **06** fits MALLET over sliding windows; the full subset is ~4.1M tokens, so it
+  samples 600 episodes.
+- **07** fetches and aligns real audio. Cost tracks the *turn's* length, not the
+  word's, at roughly 0.45x realtime on CPU — which is why it caps turn duration
+  and works two podcasts at a time. Budget ~12 minutes.

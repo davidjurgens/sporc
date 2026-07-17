@@ -303,21 +303,41 @@ df = lobanov_normalize(tokens)      # per-speaker z-scores; raw formants
 Lower-level pieces, if you want the steps:
 
 ```python
-from sporc.phonetics import fetch_turn_audio, align_turn, measure_formants
+from sporc.phonetics import (fetch_turn_audio, align_turn, measure_formants,
+                             stressed_vowel_index)
 
 audio, sr = fetch_turn_audio(turn)                      # range-fetches ONLY the turn
-words = align_turn(turn, audio=audio, level="word")     # real word timings
-phones = align_turn(turn, audio=clip, level="phone", word="caught")
-measure_formants(clip, sr, phones[1].start, phones[1].end)   # F1/F2/F3
+words = align_turn(turn, audio=audio, sample_rate=sr, level="word")
+
+# level="phone" aligns one word's clip, not a whole turn: forced alignment makes
+# the phones explain all the audio you hand it, so slice the word out first.
+hit = next(w for w in words if w.word.lower() == "caught")
+clip = audio[int(hit.start * sr):int(hit.end * sr)]
+phones = align_turn(turn, audio=clip, sample_rate=sr, level="phone", word="caught")
+
+# Ask which phone is the stressed vowel rather than counting positions: it is
+# the second phone in "caught", but the third in "across".
+v = phones[stressed_vowel_index([p.arpabet for p in phones])]
+measure_formants(clip, sr, v.start, v.end)              # F1/F2/F3
 ```
 
 Worth knowing before you rely on it:
 
 - **Only the turn is downloaded.** ffmpeg seeks into the remote mp3 with an HTTP
   range request: ~1–2 s and a few hundred KB per turn, not a 100 MB episode.
+- **Aligning costs more than fetching.** Finding a word means aligning the whole
+  turn, at ~0.45x realtime on CPU — so cost scales with the *turn*, not the word.
+  Turns run long (median ~64 s for a common word, longest in the corpus 3,240 s),
+  so `find_word_tokens` skips turns over `max_turn_duration=30` by default and
+  logs what it dropped. A `limit=50` call is minutes, not seconds.
 - **The audio is external.** `mp3_url` points at the publisher's CDN, not
   HuggingFace. Links rot; some hosts need redirects resolved first, which
   `fetch_turn_audio` does.
+- **A speaker is a name.** `lobanov_normalize` groups by inferred name across
+  episodes and shows, and drops `NO_INFERRED_SPEAKER` and raw `SPEAKER_00`
+  labels rather than pooling them — the placeholder is the corpus's most common
+  speaker value and would otherwise average unrelated people into one voice.
+  Two real people sharing a name still pool; SPoRC has no canonical speaker id.
 - **`estimate_word_audio()` is not this.** It interpolates by character offset and
   is deprecated for phonetic use.
 

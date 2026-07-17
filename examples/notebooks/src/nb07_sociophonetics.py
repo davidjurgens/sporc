@@ -63,6 +63,10 @@ phone timings + audio   ->  Praat             ->  F1/F2 at the vowel
 `sporc.phonetics` implements that chain (`pip install sporc[phonetics]`, plus
 ffmpeg). It fetches **only the turn**, via an HTTP range request — a 10-second
 turn costs ~1–2 s and a few hundred KB, not a 100 MB episode download.
+
+That fetch is the cheap half. Aligning the turn is what actually costs, and it
+scales with the turn's length rather than the word's — see "Now do it at scale"
+below, where that turns out to govern the whole notebook.
 """),
     ("code", '''\
 from sporc.phonetics import (fetch_turn_audio, align_turn, measure_formants,
@@ -186,42 +190,63 @@ print(f"\\nF1 = {vals['f1']:.0f} Hz   F2 = {vals['f2']:.0f} Hz"
 > durations back in the 50–150 ms range you see above. Treat the boundaries as
 > good to a few tens of ms — not as hand-corrected Praat segmentation.
 
-## Now do it at scale
+## Now do it at scale — and *whose* tokens matter
 
-`find_word_tokens()` runs the whole chain over search results.
+`find_word_tokens()` runs the whole chain over search results. Two things govern
+how you call it, and both are easy to get wrong.
 
-**This is the slow cell, and the cost is structural**: every token needs its own
-audio fetched over the network (~1–2 s) and then aligned. The settings below take
-roughly **3–5 minutes** for ~50 tokens. Raise `PROBE`/`limit` for a real study and
-expect it to scale linearly — a proper merger analysis wants 20+ tokens *per class
-per speaker*, which is an overnight job, not a tutorial cell.
+**The cost is alignment, not network.** Finding a word means aligning the turn's
+whole text to its whole audio, and CTC runs at roughly **0.45× realtime on CPU**
+— so a turn costs about half its own duration no matter how short the target
+word is. Turns here are long: for a common word the median is ~64 s, the mean
+~160 s, and the longest in the corpus is **3,240 s** — a 54-minute monologue,
+about 24 minutes of CPU to find one word in. `max_turn_duration` (default 30 s)
+is what keeps this finite; it tells you what it skipped.
+
+**Tokens must land on the same speaker.** Lobanov normalizes *within* a speaker,
+so 50 tokens spread over 50 people normalize nothing. Searching corpus-wide
+scatters exactly that way. Searching **within a podcast** concentrates tokens on
+its host, who does most of the talking — and because a speaker is their name,
+tokens still pool across episodes and across shows for anyone who recurs.
 """),
     ("code", '''\
 from sporc.phonetics import find_word_tokens
 import itertools, collections, time
 
 # Frequent members of each set; rare words like "cot" yield too few tokens.
-# Kept short on purpose -- see the note above about runtime.
 PROBE = ["talk", "long", "off", "across",      # THOUGHT
          "not", "got", "lot", "job"]           # LOT
-PER_WORD = 6
+PER_WORD = 4
+N_PODCASTS = 2          # ~6 min each; the whole cost of this notebook
+
+# Pick podcasts that actually carry both sets in turns short enough to align,
+# from speakers the corpus could name. Cheap: metadata only, no audio.
+cand = collections.Counter()
+for w in PROBE:
+    for h in sporc.search_turns(w, mode="exact", limit=400):
+        secs = float(h.get("end_time", 0)) - float(h.get("start_time", 0))
+        if 0 < secs <= 30.0 and str(h.get("speaker_name")) != "NO_INFERRED_SPEAKER":
+            cand[h["podcast_id"]] += 1
+targets = [p for p, _ in cand.most_common(N_PODCASTS)]
+print(f"{len(cand)} podcasts carry probe words in alignable turns; "
+      f"using the top {len(targets)}")
 
 t0 = time.time()
 tokens = []
-for w in PROBE:
-    try:
-        got = find_word_tokens(sporc, w, limit=PER_WORD)
-    except Exception as e:
-        print(f"  {w:10s} failed: {type(e).__name__}: {e}")
-        continue
-    tokens.extend(got)
-    print(f"  {w:10s} {lexical_set(w) or '-':8s} {len(got):2d} tokens"
-          f"   ({time.time()-t0:4.0f}s elapsed)", flush=True)
+for pid in targets:
+    for w in PROBE:
+        try:
+            tokens.extend(find_word_tokens(sporc, w, limit=PER_WORD,
+                                           podcast_id=pid))
+        except Exception as e:
+            print(f"  {w:10s} failed: {type(e).__name__}: {e}")
+    print(f"  {pid}  ->  {len(tokens):3d} tokens so far "
+          f"({time.time()-t0:4.0f}s)", flush=True)
 
 print(f"\\ntotal measured tokens: {len(tokens)}  in {time.time()-t0:.0f}s")
 if tokens:
     print(f"~{(time.time()-t0)/max(len(tokens),1):.1f}s per token "
-          f"(network fetch + alignment dominate)")
+          f"(aligning each turn dominates; see max_turn_duration)")
 '''),
     ("code", '''\
 import pandas as pd
@@ -250,9 +275,15 @@ not a nicety; without it the chart below is noise.
 from sporc.phonetics import lobanov_normalize
 
 # min_tokens=4 is far too low for a real claim -- a z-score over four points is
-# barely a distribution. It is set here so the tutorial produces a plot from a
-# 3-minute fetch; for anything you publish, raise PROBE/PER_WORD above and put
-# this back to 15-20.
+# barely a distribution. It is set here so the tutorial plots something from a
+# ~12-minute fetch; put it back to 15-20 for anything you publish.
+#
+# What raises it is tokens *per speaker*, not tokens: more probe words per
+# podcast, or more episodes of the same host. More podcasts mostly adds more
+# speakers with too few tokens each. lobanov_normalize drops the corpus's
+# NO_INFERRED_SPEAKER placeholder for you -- it is the most common speaker
+# value here and would otherwise pass this threshold easily while pooling
+# dozens of different people into one "speaker".
 MIN_TOKENS = 4
 norm = lobanov_normalize(df, min_tokens=MIN_TOKENS)
 print(f"speakers with >= {MIN_TOKENS} tokens : {norm.speaker.nunique() if len(norm) else 0}")

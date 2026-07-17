@@ -44,13 +44,13 @@ for k in ("total_podcasts", "total_episodes", "total_duration_hours",
     ("md", """\
 ## When is SPoRC from?
 
-This surprises people: SPoRC is a **two-month snapshot**, not a longitudinal
-archive. Every episode was published between **1 May and 30 June 2020**.
+SPoRC is a **two-month snapshot**, not a longitudinal archive. Every episode was
+published between **1 May and 30 June 2020**.
 
-That rules out "trends over the years". It rules *in* something better — the
-window straddles a sharp, dateable event (25 May 2020), which makes
-before/after comparison a natural experiment rather than a correlation. Notebook
-05 uses exactly that.
+So "trends over the years" is out. What the window does give you is a sharp,
+dateable event sitting in the middle of it (25 May 2020), which turns a
+before/after comparison into something closer to a natural experiment than a
+correlation. Notebook 05 uses exactly that.
 """),
     ("code", '''\
 import pandas as pd
@@ -160,8 +160,8 @@ inference step tries to attach a *name* and a *role*. That second step is sparse
 in a 174k-turn sample, **90.6% of turns are `NO_INFERRED_ROLE`** — only 7.4%
 host, 1.9% guest.
 
-The consequence is easy to miss. `get_host_turns()` does not return "the host's
-turns"; it returns "the turns we could confidently attribute to a host". Role
+The consequence is easy to miss: `get_host_turns()` does not return "the host's
+turns", it returns "the turns we could confidently attribute to a host". Role
 counts are a **lower bound**, never a partition of the conversation. A chart of
 host-vs-guest talk time that ignores this is mostly measuring the inference
 step's confidence.

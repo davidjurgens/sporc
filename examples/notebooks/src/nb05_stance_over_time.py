@@ -6,11 +6,11 @@ CELLS = [
     ("md", """\
 # 5 · Before and after: an entity across a two-month window
 
-SPoRC is a snapshot of **1 May – 30 June 2020**. That rules out long-run trends.
-It rules *in* something a longer corpus would struggle to give you: the window
-contains a sharp, precisely dated event — **25 May 2020**, the killing of George
-Floyd — sitting almost exactly at the corpus's midpoint (the median episode date
-is 28 May).
+SPoRC is a snapshot of **1 May – 30 June 2020**, which rules out long-run
+trends. What it does contain is a sharp, precisely dated event — **25 May 2020**,
+the killing of George Floyd — sitting almost exactly at the corpus's midpoint
+(the median episode date is 28 May). A longer corpus would struggle to give you
+that.
 
 That turns "how do podcasts talk about X over time?" from a correlational
 question into something closer to a natural experiment: the same shows, the same
