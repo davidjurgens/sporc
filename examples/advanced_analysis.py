@@ -18,6 +18,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from sporc import SPORCDataset, SPORCError
 
 
+def open_dataset():
+    """Open the tutorial subset, or whatever SPORC_PARQUET_DIR points at."""
+    data_dir = os.environ.get(
+        "SPORC_PARQUET_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "subsets", "tutorial"),
+    )
+    return SPORCDataset(parquet_dir=os.path.abspath(data_dir))
+
+
 def analyze_conversation_flow(episode):
     """Analyze the conversation flow and speaker interaction patterns."""
     print(f"\n=== Conversation Flow Analysis for '{episode.title}' ===")
@@ -218,7 +227,7 @@ def main():
     try:
         # Initialize the dataset
         print("Loading SPORC dataset...")
-        sporc = SPORCDataset()
+        sporc = open_dataset()
         print(f"✓ Loaded dataset with {len(sporc)} episodes\n")
 
         # Get dataset overview
@@ -246,18 +255,16 @@ def main():
             # Analyze podcast patterns
             analyze_podcast_patterns(podcast)
 
-            # Analyze a specific episode
-            if podcast.episodes:
-                episode = podcast.episodes[0]
+            # Analyze a specific episode. Turn analysis needs an episode that
+            # actually has turns (only ~a third do), so prefer a diarized one.
+            episode = next((ep for ep in podcast.episodes
+                            if ep.has_turn_data and ep.turns), None)
+            if episode is None:
+                episode = next((ep for ep in sporc.iterate_episodes()
+                                if ep.has_turn_data and ep.turns), None)
+            if episode is not None:
                 print(f"\nAnalyzing episode: {episode.title}")
-
-                # Load turns if not already loaded
-                if not episode._turns_loaded:
-                    print("Loading turn data...")
-                    # This would normally be done automatically, but we'll simulate it
-                    print("(Turn data loading simulated)")
-
-                # Perform analyses
+                # Turns load on demand the first time they are accessed.
                 analyze_conversation_flow(episode)
                 analyze_data_quality(episode)
                 analyze_content_patterns(episode)

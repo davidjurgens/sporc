@@ -2,18 +2,41 @@
 """
 Basic usage example for the SPORC package.
 
-This example demonstrates the core functionality of the SPORC package,
-including loading the dataset, searching for podcasts and episodes,
-and analyzing conversation turns.
+Loading the dataset, searching for podcasts and episodes, and reading
+conversation turns.
+
+By default this reads the small tutorial subset built by
+``scripts/build_tutorial_subset.py``. Point ``SPORC_PARQUET_DIR`` at any other
+Parquet layout — including the full corpus — to run it against that instead.
 """
 
-import sys
 import os
+import sys
 
-# Add the parent directory to the path so we can import the sporc package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from sporc import SPORCDataset, SPORCError
+
+
+def open_dataset():
+    """Open the tutorial subset, or whatever SPORC_PARQUET_DIR points at."""
+    data_dir = os.environ.get(
+        "SPORC_PARQUET_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "subsets", "tutorial"),
+    )
+    return SPORCDataset(parquet_dir=os.path.abspath(data_dir))
+
+
+def first_diarized_episode(sporc):
+    """A diarized episode to demonstrate turn analysis on.
+
+    Only about a third of SPoRC episodes carry speaker turns, so pick one that
+    does rather than assuming the first episode has any.
+    """
+    for episode in sporc.iterate_episodes():
+        if episode.has_turn_data and episode.turns:
+            return episode
+    return None
 
 
 def main():
@@ -22,13 +45,11 @@ def main():
     print("=== SPORC Basic Usage Example ===\n")
 
     try:
-        # Initialize the dataset
         print("1. Loading SPORC dataset...")
-        sporc = SPORCDataset()
-        print(f"   ✓ Loaded dataset with {len(sporc)} episodes\n")
+        sporc = open_dataset()
+        print(f"   Loaded {len(sporc)} episodes\n")
 
-        # Get dataset statistics
-        print("2. Dataset Statistics:")
+        print("2. Dataset statistics:")
         stats = sporc.get_dataset_statistics()
         print(f"   - Total podcasts: {stats['total_podcasts']}")
         print(f"   - Total episodes: {stats['total_episodes']}")
@@ -36,115 +57,66 @@ def main():
         print(f"   - Average episode length: {stats['avg_episode_duration_minutes']:.1f} minutes")
         print()
 
-        # Search for a specific podcast
-        print("3. Searching for a specific podcast...")
-        try:
-            podcast = sporc.search_podcast("SingOut SpeakOut")
-            print(f"   ✓ Found podcast: {podcast.title}")
-            print(f"   - Description: {podcast.description[:100]}...")
-            print(f"   - Number of episodes: {podcast.num_episodes}")
-            print(f"   - Hosts: {', '.join(podcast.host_names)}")
-            print(f"   - Categories: {', '.join(podcast.categories)}")
-            print()
+        # Look a podcast up by title. Rather than hard-code a name that may not
+        # be in your layout, take one from the catalog and search for it.
+        podcasts = sporc.get_all_podcasts()
+        print("3. Looking up a podcast by title...")
+        sample_title = podcasts[0].title
+        podcast = sporc.search_podcast(sample_title)
+        print(f"   Found: {podcast.title}")
+        print(f"   - Episodes: {podcast.num_episodes}")
+        print(f"   - Hosts: {', '.join(podcast.host_names) or '(none labelled)'}")
+        print(f"   - Categories: {', '.join(podcast.categories) or '(none)'}")
+        print()
 
-            # Show some episodes from this podcast
-            print("4. Sample episodes from the podcast:")
-            for i, episode in enumerate(podcast.episodes[:3]):
-                print(f"   Episode {i+1}: {episode.title}")
-                print(f"   - Duration: {episode.duration_minutes:.1f} minutes")
-                print(f"   - Speakers: {episode.num_main_speakers}")
-                print(f"   - Has guests: {episode.has_guests}")
-                print()
+        print("4. A few episodes from that podcast:")
+        for i, episode in enumerate(podcast.episodes[:3], 1):
+            print(f"   {i}. {episode.title}  ({episode.duration_minutes:.1f} min, "
+                  f"{episode.num_main_speakers} speakers)")
+        print()
 
-        except Exception as e:
-            print(f"   ✗ Error finding podcast: {e}")
-            print()
+        # Metadata search. search_episodes takes keyword criteria and returns
+        # every match; unknown criteria are ignored rather than erroring.
+        print("5. Searching episodes by criteria (>= 5 min, <= 3 speakers)...")
+        episodes = sporc.search_episodes(min_duration=300, max_speakers=3)
+        print(f"   Found {len(episodes)} episodes matching")
+        print()
 
-        # Search for episodes with specific criteria
-        print("5. Searching for episodes with specific criteria...")
-        episodes = sporc.search_episodes(
-            min_duration=300,  # At least 5 minutes
-            max_speakers=3,    # Maximum 3 speakers
-            category="education"
-        )
-        print(f"   ✓ Found {len(episodes)} episodes matching criteria")
-
-        if episodes:
-            episode = episodes[0]
-            print(f"   Sample episode: {episode.title}")
-            print(f"   - Duration: {episode.duration_minutes:.1f} minutes")
-            print(f"   - Speakers: {episode.num_main_speakers}")
-            print(f"   - Categories: {', '.join(episode.categories)}")
-            print()
-
-            # Analyze conversation turns
-            print("6. Analyzing conversation turns...")
+        # Turn analysis needs an episode that actually has turns.
+        print("6. Reading conversation turns...")
+        episode = first_diarized_episode(sporc)
+        if episode is None:
+            print("   No diarized episodes in this layout; skipping turn analysis.")
+        else:
             turns = episode.get_all_turns()
-            print(f"   ✓ Loaded {len(turns)} conversation turns")
-
-            if turns:
-                # Show first few turns
-                print("   First 3 turns:")
-                for i, turn in enumerate(turns[:3]):
-                    print(f"   Turn {i+1}:")
-                    print(f"   - Speaker: {turn.primary_speaker}")
-                    print(f"   - Duration: {turn.duration:.1f} seconds")
-                    print(f"   - Words: {turn.word_count}")
-                    print(f"   - Text: {turn.text[:100]}...")
-                    print()
-
-                # Get turns by time range
-                print("7. Getting turns from first 2 minutes...")
-                early_turns = episode.get_turns_by_time_range(0, 120)
-                print(f"   ✓ Found {len(early_turns)} turns in first 2 minutes")
-
-                # Get turns by speaker
-                if turns:
-                    speaker = turns[0].primary_speaker
-                    speaker_turns = episode.get_turns_by_speaker(speaker)
-                    print(f"   ✓ Found {len(speaker_turns)} turns by {speaker}")
-
-                # Get long turns
-                long_turns = episode.get_turns_by_min_length(50)
-                print(f"   ✓ Found {len(long_turns)} turns with 50+ words")
-                print()
-
-        # Search for episodes by host
-        print("8. Searching for episodes by host...")
-        host_episodes = sporc.search_episodes(host_name="Simon")
-        print(f"   ✓ Found {len(host_episodes)} episodes hosted by Simon")
-
-        if host_episodes:
-            print(f"   Sample episode: {host_episodes[0].title}")
+            print(f"   '{episode.title}' has {len(turns)} turns")
+            for i, turn in enumerate(turns[:3], 1):
+                print(f"   Turn {i}: {turn.primary_speaker} "
+                      f"({turn.duration:.1f}s, {turn.word_count} words)")
+                print(f"     {turn.text[:80]}...")
             print()
 
-        # Get all podcasts
-        print("9. Getting all podcasts...")
-        all_podcasts = sporc.get_all_podcasts()
-        print(f"   ✓ Found {len(all_podcasts)} total podcasts")
-
-        # Show podcast statistics
-        if all_podcasts:
-            podcast = all_podcasts[0]
-            print(f"   Sample podcast: {podcast.title}")
-            stats = podcast.get_episode_statistics()
-            print(f"   - Total episodes: {stats['num_episodes']}")
-            print(f"   - Total duration: {stats['total_duration_hours']:.1f} hours")
-            print(f"   - Average episode length: {stats['avg_episode_duration_minutes']:.1f} minutes")
-            print(f"   - Episode types: {stats['episode_types']}")
+            print("7. Slicing turns by time and speaker:")
+            early = episode.get_turns_by_time_range(0, 120)
+            print(f"   - {len(early)} turns in the first 2 minutes")
+            speaker = turns[0].primary_speaker
+            print(f"   - {len(episode.get_turns_by_speaker(speaker))} turns by {speaker}")
+            print(f"   - {len(episode.get_turns_by_min_length(50))} turns of 50+ words")
             print()
+
+        print("8. Per-podcast statistics:")
+        stats = podcast.get_episode_statistics()
+        print(f"   - Episodes: {stats['num_episodes']}")
+        print(f"   - Total duration: {stats['total_duration_hours']:.1f} hours")
+        print(f"   - Average length: {stats['avg_episode_duration_minutes']:.1f} minutes")
+        print()
 
         print("=== Example completed successfully! ===")
 
     except SPORCError as e:
         print(f"SPORC Error: {e}")
-        print("\nMake sure you have:")
-        print("1. Accepted the dataset terms on Hugging Face")
-        print("2. Set up Hugging Face authentication")
-        print("3. Installed all required dependencies")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+        print("\nBuild the tutorial subset first (see examples/notebooks/README.md), "
+              "or set SPORC_PARQUET_DIR to a Parquet layout you have.")
         sys.exit(1)
 
 

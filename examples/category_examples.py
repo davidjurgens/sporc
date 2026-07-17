@@ -7,6 +7,11 @@ with the SPORC package, including main categories, subcategories,
 and utility functions.
 """
 
+import os
+import sys
+# Prepend the repo root so a source checkout wins over any installed sporc.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from sporc import (
     SPORCDataset,
     get_all_categories,
@@ -25,6 +30,15 @@ from sporc import (
 )
 
 
+def open_dataset():
+    """Open the tutorial subset, or whatever SPORC_PARQUET_DIR points at."""
+    data_dir = os.environ.get(
+        "SPORC_PARQUET_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "subsets", "tutorial"),
+    )
+    return SPORCDataset(parquet_dir=os.path.abspath(data_dir))
+
+
 def main():
     """Main function demonstrating category usage."""
 
@@ -33,11 +47,11 @@ def main():
     # Initialize dataset
     print("1. Loading SPORC dataset...")
     try:
-        sporc = SPORCDataset()
+        sporc = open_dataset()
         print(f"   ✓ Loaded dataset with {len(sporc)} episodes\n")
     except Exception as e:
         print(f"   ✗ Error loading dataset: {e}")
-        print("   Please ensure you have accepted the dataset terms on Hugging Face")
+        print("   Build the tutorial subset first, or set SPORC_PARQUET_DIR.")
         return
 
     # Demonstrate category utility functions
@@ -182,7 +196,7 @@ def main():
             episodes = sporc.search_episodes(category=category)
             if episodes:
                 avg_duration = sum(ep.duration_minutes for ep in episodes) / len(episodes)
-                avg_speakers = sum(ep.speaker_count for ep in episodes) / len(episodes)
+                avg_speakers = sum(ep.num_main_speakers for ep in episodes) / len(episodes)
 
                 print(f"   {category}:")
                 print(f"     Episodes: {len(episodes)}")
@@ -195,30 +209,8 @@ def main():
 
     print()
 
-    # Demonstrate selective loading by category
-    print("9. Selective Loading by Category:")
-
-    try:
-        # Load only education and science podcasts
-        sporc_selective = SPORCDataset(streaming=True)
-        sporc_selective.load_podcast_subset(categories=['Education', 'Science'])
-
-        print(f"   Loaded {len(sporc_selective)} episodes from Education and Science")
-
-        # Fast searches within the subset
-        long_education = sporc_selective.search_episodes(
-            category="Education",
-            min_duration=1800  # 30+ minutes
-        )
-        print(f"   Long education episodes: {len(long_education)}")
-
-    except Exception as e:
-        print(f"   Error with selective loading: {e}")
-
-    print()
-
     # Demonstrate category comparison
-    print("10. Category Comparison:")
+    print("9. Category Comparison:")
 
     def compare_categories(category1, category2):
         """Compare two categories."""
@@ -243,7 +235,7 @@ def main():
     print()
 
     # Show available categories
-    print("11. Available Categories:")
+    print("10. Available Categories:")
     print("   Main Categories:")
     for i, category in enumerate(main_categories, 1):
         print(f"     {i:2d}. {category}")

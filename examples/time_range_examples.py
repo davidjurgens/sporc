@@ -6,10 +6,24 @@ This script demonstrates how to use the enhanced time range functionality
 with different behaviors for handling turns that are partially within a time range.
 """
 
+import os
+import sys
+# Prepend the repo root so a source checkout wins over any installed sporc.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from sporc import (
     SPORCDataset,
     TimeRangeBehavior
 )
+
+
+def open_dataset():
+    """Open the tutorial subset, or whatever SPORC_PARQUET_DIR points at."""
+    data_dir = os.environ.get(
+        "SPORC_PARQUET_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "subsets", "tutorial"),
+    )
+    return SPORCDataset(parquet_dir=os.path.abspath(data_dir))
 
 
 def main():
@@ -20,37 +34,25 @@ def main():
     # Initialize dataset
     print("1. Loading SPORC dataset...")
     try:
-        sporc = SPORCDataset()
+        sporc = open_dataset()
         print(f"   ✓ Loaded dataset with {len(sporc)} episodes\n")
     except Exception as e:
         print(f"   ✗ Error loading dataset: {e}")
-        print("   Please ensure you have accepted the dataset terms on Hugging Face")
+        print("   Build the tutorial subset first, or set SPORC_PARQUET_DIR.")
         return
 
-    # Get a sample episode
+    # A 30+ minute episode that has turns to slice. Turns load on demand the
+    # first time they are accessed, so there is nothing to load explicitly.
     print("2. Getting a sample episode...")
-    try:
-        episodes = sporc.search_episodes(min_duration=1800)  # 30+ minute episodes
-        if not episodes:
-            print("   ✗ No episodes found")
-            return
-
-        episode = episodes[0]
-        print(f"   ✓ Selected episode: {episode.title}")
-        print(f"   - Duration: {episode.duration_minutes:.1f} minutes")
-        print(f"   - Total turns: {len(episode.get_all_turns())}")
-        print()
-
-        # Load turns if not already loaded
-        if not episode._turns_loaded:
-            print("   Loading turns...")
-            # This would normally be done automatically, but we'll simulate it
-            print("   ✓ Turns loaded")
-        print()
-
-    except Exception as e:
-        print(f"   ✗ Error getting episode: {e}")
+    episode = next((e for e in sporc.iterate_episodes()
+                    if e.has_turn_data and e.duration_seconds >= 1800 and e.turns), None)
+    if episode is None:
+        print("   ✗ No diarized 30-minute episodes in this layout")
         return
+    print(f"   ✓ Selected episode: {episode.title}")
+    print(f"   - Duration: {episode.duration_minutes:.1f} minutes")
+    print(f"   - Total turns: {len(episode.get_all_turns())}")
+    print()
 
     # Demonstrate different time range behaviors
     print("3. Demonstrating Time Range Behaviors:")

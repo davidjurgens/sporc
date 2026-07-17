@@ -374,7 +374,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if start_time < 0:
             start_time = 0
@@ -432,7 +435,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if start_time < 0:
             start_time = 0
@@ -485,7 +491,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         return [
             turn for turn in self._turns
@@ -505,7 +514,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         return [turn for turn in self._turns if turn.word_count >= min_length]
 
@@ -521,7 +533,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         return [
             turn for turn in self._turns
@@ -556,7 +571,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if window_size <= overlap:
             raise ValueError("Window size must be greater than overlap")
@@ -633,7 +651,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if window_duration <= overlap_duration:
             raise ValueError("Window duration must be greater than overlap duration")
@@ -722,7 +743,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if window_size <= overlap:
             raise ValueError("Window size must be greater than overlap")
@@ -790,7 +814,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return self._turns.copy()
 
     @property
@@ -803,7 +830,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return len(self._turns)
 
     @property
@@ -829,7 +859,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return self._turns.copy()
 
     def get_turn_statistics(self) -> Dict[str, Any]:
@@ -841,7 +874,10 @@ class Episode:
         """
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
 
         if not self._turns:
             return {
@@ -928,19 +964,28 @@ class Episode:
         """Return the number of turns in this episode."""
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return len(self._turns)
 
     def __getitem__(self, index: int) -> Turn:
         """Get a turn by index."""
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return self._turns[index]
 
     def __iter__(self):
         """Iterate over turns in this episode."""
         self._ensure_turns_loaded()
         if not self._turns_loaded:
-            raise RuntimeError("Turns not loaded. Call load_turns() first.")
+            raise RuntimeError(
+                "Turns not loaded. Episodes from SPORCDataset load turns on "
+                "demand; this episode has no turn loader attached."
+            )
         return iter(self._turns)

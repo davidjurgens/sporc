@@ -9,48 +9,45 @@ in chunks with configurable overlap, which is useful for:
 - Batch processing of large episodes
 """
 
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys
+# Prepend the repo root so a source checkout wins over any installed sporc.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sporc import SPORCDataset
-from sporc.episode import Episode, TurnWindow
-from sporc.turn import Turn
+
+# One diarized episode, opened once and reused by every demo below.
+_EPISODE = None
+
+
+def open_dataset():
+    """Open the tutorial subset, or whatever SPORC_PARQUET_DIR points at."""
+    data_dir = os.environ.get(
+        "SPORC_PARQUET_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "subsets", "tutorial"),
+    )
+    return SPORCDataset(parquet_dir=os.path.abspath(data_dir))
 
 
 def create_test_episode():
-    """Create a test episode with sample turns for demonstration."""
-    # Create a test episode
-    episode = Episode(
-        title="Test Conversation Episode",
-        description="A test episode for sliding window demonstration",
-        mp3_url="test_conversation.mp3",
-        duration_seconds=600.0,  # 10 minutes
-        transcript="Test transcript for conversation analysis",
-        podcast_title="Test Podcast",
-        podcast_description="A test podcast for demonstration",
-        rss_url="test.rss"
-    )
+    """A real diarized episode from the dataset to window over.
 
-    # Create sample turns with conversation data
-    turns_data = []
-    for i in range(20):  # 20 turns
-        turn_data = {
-            'mp3url': 'test_conversation.mp3',
-            'speaker': [f'SPEAKER_{i % 3:02d}'],  # 3 speakers alternating
-            'turnText': f"This is turn {i+1} in the conversation. Speaker {i % 3} is talking about topic {i // 3 + 1}.",
-            'startTime': i * 30.0,  # 30 seconds per turn
-            'endTime': (i + 1) * 30.0,
-            'duration': 30.0,
-            'turnCount': i,
-            'inferredSpeakerName': f"Speaker_{i % 3}",
-            'inferredSpeakerRole': "host" if i % 3 == 0 else "guest"
-        }
-        turns_data.append(turn_data)
-
-    # Load turns into episode
-    episode.load_turns(turns_data)
-    return episode
+    Sliding windows operate on speaker turns, so this needs an episode that has
+    them — only about a third of SPoRC episodes do. The result is cached so the
+    five demos below share one episode.
+    """
+    global _EPISODE
+    if _EPISODE is None:
+        sporc = open_dataset()
+        _EPISODE = next((e for e in sporc.iterate_episodes()
+                         if e.has_turn_data and len(e.turns) >= 12), None)
+        if _EPISODE is None:
+            raise RuntimeError(
+                "No episode with enough turns in this layout. Build the tutorial "
+                "subset (see examples/notebooks/README.md), or set "
+                "SPORC_PARQUET_DIR to a layout with diarized episodes."
+            )
+    return _EPISODE
 
 
 def basic_sliding_window_example():
