@@ -3,13 +3,15 @@ Build the tutorial notebooks from plain Python sources.
 
 Notebook JSON is unreviewable in a diff, so each tutorial is written here as a
 list of (kind, text) cells and rendered to .ipynb. Edit the source, re-run this,
-commit both.
+commit both. This build machinery lives outside examples/ so that directory holds
+only what a user runs; the sources it reads are under scripts/notebooks/src, and
+the .ipynb it writes land in examples/notebooks alongside _viz.py.
 
-    python examples/notebooks/_build.py             # build all
-    python examples/notebooks/_build.py 07          # build one
-    python examples/notebooks/_build.py --check     # verify .ipynb match src/
-    python examples/notebooks/_build.py --execute   # build, then run so the
-                                                    # .ipynb ship with outputs
+    python scripts/notebooks/build.py             # build all
+    python scripts/notebooks/build.py 07          # build one
+    python scripts/notebooks/build.py --check     # verify .ipynb match src/
+    python scripts/notebooks/build.py --execute   # build, then run so the
+                                                  # .ipynb ship with outputs
 
 The committed .ipynb are executed: they carry their outputs and figures so the
 notebooks read on GitHub without anyone building the subset first. A plain build
@@ -26,6 +28,12 @@ import nbformat as nbf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+# Sources live here (scripts/notebooks); the rendered .ipynb and their _viz.py
+# runtime helper live in examples/notebooks. Notebooks are written to and
+# executed from NB_DIR so their relative paths ("../.." to the repo root,
+# _viz.py, ../../subsets/tutorial) resolve exactly as when a user runs them.
+NB_DIR = os.path.abspath(os.path.join(HERE, "..", "..", "examples", "notebooks"))
 
 # 07 fetches and aligns real audio for ~12 minutes; 06 waits on MALLET.
 EXECUTE_TIMEOUT = 2400
@@ -91,8 +99,8 @@ def carry_outputs(fresh, path: str):
 
 def build(stem: str, title: str, cells) -> str:
     nb = carry_outputs(render(stem, title, cells),
-                       os.path.join(HERE, f"{stem}.ipynb"))
-    path = os.path.join(HERE, f"{stem}.ipynb")
+                       os.path.join(NB_DIR, f"{stem}.ipynb"))
+    path = os.path.join(NB_DIR, f"{stem}.ipynb")
     with open(path, "w") as f:
         nbf.write(nb, f)
     return path
@@ -150,11 +158,11 @@ def execute(stem: str) -> bool:
     from nbclient import NotebookClient
     from nbclient.exceptions import CellExecutionError
 
-    path = os.path.join(HERE, f"{stem}.ipynb")
+    path = os.path.join(NB_DIR, f"{stem}.ipynb")
     nb = nbf.read(path, as_version=4)
     client = NotebookClient(
         nb, timeout=EXECUTE_TIMEOUT, kernel_name="python3",
-        resources={"metadata": {"path": HERE}},
+        resources={"metadata": {"path": NB_DIR}},
     )
     try:
         client.execute()
@@ -179,7 +187,7 @@ def main(argv):
             continue
         mod = importlib.import_module(f"src.{mod_name}")
         importlib.reload(mod)
-        path = os.path.join(HERE, f"{stem}.ipynb")
+        path = os.path.join(NB_DIR, f"{stem}.ipynb")
         if check:
             # Compare sources, not whole files: the shipped .ipynb carry outputs
             # that src/ knows nothing about, so a serialized compare would call

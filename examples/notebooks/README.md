@@ -110,20 +110,24 @@ Notebook 01 demonstrates all three.
 
 ## Editing the notebooks
 
+This directory holds only what you run: the executed `.ipynb` and the `_viz.py`
+they import. The build machinery that generates them lives outside `examples/`,
+under `scripts/notebooks/`, because it is not user-facing.
+
 Notebook JSON is unreviewable in a diff, so each tutorial's real source is a
-plain Python file under `src/`:
+plain Python file under `scripts/notebooks/src/`:
 
 ```
-src/nb01_cartography.py   ->   01_corpus_cartography.ipynb
+scripts/notebooks/src/nb01_cartography.py   ->   examples/notebooks/01_corpus_cartography.ipynb
 ```
 
-Edit the source, then rebuild, and commit both:
+Edit the source, then rebuild, and commit both (run from the repo root):
 
 ```bash
-python _build.py            # all
-python _build.py 07         # just one
-python _build.py --check    # are the .ipynb current with src/?
-python _build.py --execute  # rebuild and re-run, refreshing outputs
+python scripts/notebooks/build.py            # all
+python scripts/notebooks/build.py 07         # just one
+python scripts/notebooks/build.py --check    # are the .ipynb current with src/?
+python scripts/notebooks/build.py --execute  # rebuild and re-run, refreshing outputs
 ```
 
 The committed `.ipynb` are **executed**: they carry their outputs and figures, so
