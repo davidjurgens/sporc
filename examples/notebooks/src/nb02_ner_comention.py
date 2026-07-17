@@ -25,7 +25,12 @@ import spacy
 # en_core_web_sm is fast and adequate for PERSON/ORG/GPE on clean-ish text.
 # For publication work, en_core_web_trf is materially better on transcripts.
 try:
-    nlp = spacy.load("en_core_web_sm", disable=["lemmatizer"])
+    # NER needs only tok2vec + ner. The parser is the expensive pipe and nothing
+    # here uses a dependency tree, so dropping the rest is ~3x faster.
+    nlp = spacy.load(
+        "en_core_web_sm",
+        disable=["parser", "tagger", "attribute_ruler", "lemmatizer"],
+    )
 except OSError:
     raise SystemExit("Missing model. Run: python -m spacy download en_core_web_sm")
 except ImportError as e:
@@ -65,8 +70,23 @@ related; two names 40 minutes apart in a transcript are not. So we use turns, an
 accept the coverage cost.
 """),
     ("code", '''\
+import random
+
+# The whole subset is 2,421 diarized episodes / ~13.9M words -- ~10 minutes of
+# NER even with the trimmed pipeline. A sample keeps this notebook interactive
+# and still leaves tens of thousands of turns to build a graph from. Raise
+# N_EPISODES (or set it to None for all of them) if you have time to spend.
+N_EPISODES = 300
+
 eps = [e for e in sporc.iterate_episodes() if e.has_turn_data]
 print(f"episodes with turn data: {len(eps):,}")
+
+if N_EPISODES and len(eps) > N_EPISODES:
+    # Sort before sampling: iterate_episodes() order follows partition layout,
+    # so seeding alone would not survive a resubset.
+    eps.sort(key=lambda e: (e.podcast_title, e.title))
+    eps = random.Random(0).sample(eps, N_EPISODES)
+    print(f"sampled                : {len(eps):,}")
 
 docs = []          # (text, episode_id, podcast_title)
 for e in eps:
@@ -97,9 +117,11 @@ ent_counts = Counter()
 ent_types = {}
 pairs = Counter()
 
-# nlp.pipe batches; disabling the parser keeps NER fast on many short docs.
+# nlp.pipe batches many short docs through the model at once, which matters far
+# more than batch_size here. n_process forks workers; keep it modest on a shared
+# box. This prints nothing until it finishes -- expect a minute or two.
 texts = [d[0] for d in docs]
-for doc in nlp.pipe(texts, batch_size=64):
+for doc in nlp.pipe(texts, batch_size=128, n_process=4):
     ents = []
     for ent in doc.ents:
         if ent.label_ not in KEEP:

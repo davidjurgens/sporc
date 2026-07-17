@@ -7,6 +7,7 @@ commit both.
 
     python examples/notebooks/_build.py            # build all
     python examples/notebooks/_build.py 07         # build one
+    python examples/notebooks/_build.py --check    # verify .ipynb match src/
 """
 
 import importlib
@@ -19,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 
-def build(stem: str, title: str, cells) -> str:
+def render(stem: str, title: str, cells) -> nbf.NotebookNode:
     nb = nbf.v4.new_notebook()
     resolved = []
     for kind, text in cells:
@@ -32,12 +33,23 @@ def build(stem: str, title: str, cells) -> str:
         nbf.v4.new_markdown_cell(c) if kind == "md" else nbf.v4.new_code_cell(c)
         for kind, c in resolved
     ]
+    # nbformat mints a random id per cell, so every rebuild rewrites every id and
+    # buries the real change in noise -- which is how a stale 03 shipped with its
+    # source's guest-artifact section missing. Deterministic ids keep a rebuild
+    # that changed nothing a no-op in git.
+    for i, cell in enumerate(nb.cells):
+        cell["id"] = f"{stem}-{i:02d}"
     nb.metadata = {
         "kernelspec": {"display_name": "Python 3", "language": "python",
                        "name": "python3"},
         "language_info": {"name": "python"},
         "title": title,
     }
+    return nb
+
+
+def build(stem: str, title: str, cells) -> str:
+    nb = render(stem, title, cells)
     path = os.path.join(HERE, f"{stem}.ipynb")
     with open(path, "w") as f:
         nbf.write(nb, f)
@@ -92,15 +104,35 @@ NOTEBOOKS = {
 
 
 def main(argv):
-    want = argv[1:] if len(argv) > 1 else None
+    args = [a for a in argv[1:] if a != "--check"]
+    check = "--check" in argv
+    want = args or None
+    stale = []
     for stem, mod_name in NOTEBOOKS.items():
         if want and not any(w in stem for w in want):
             continue
         mod = importlib.import_module(f"src.{mod_name}")
         importlib.reload(mod)
+        if check:
+            path = os.path.join(HERE, f"{stem}.ipynb")
+            # nbf.write appends a trailing newline that nbf.writes omits, so
+            # compare the serialized forms rather than raw file text.
+            fresh = nbf.writes(render(stem, mod.TITLE, mod.CELLS))
+            on_disk = (nbf.writes(nbf.read(path, as_version=4))
+                       if os.path.exists(path) else "")
+            status = "ok" if fresh == on_disk else "STALE"
+            if status == "STALE":
+                stale.append(stem)
+            print(f"{status:5} {stem}.ipynb")
+            continue
         path = build(stem, mod.TITLE, mod.CELLS)
         print(f"built {os.path.relpath(path, HERE)}  ({len(mod.CELLS)} cells)")
+    if stale:
+        print(f"\n{len(stale)} notebook(s) out of date with src/. Re-run without "
+              f"--check, and commit the .ipynb alongside the source.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    sys.exit(main(sys.argv))

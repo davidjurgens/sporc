@@ -63,8 +63,20 @@ We use windows. It is also a nice demonstration of the sliding-window API.
 import little_mallet_wrapper as lmw
 import pandas as pd
 
+import random
+
+# All 2,421 diarized episodes give ~4.1M tokens, which MALLET fits in ~20
+# minutes -- too slow to sit and watch. 600 episodes still yields thousands of
+# windows and readable topics. Raise it (or set None) for a real run.
+N_EPISODES = 600
+
 eps = [e for e in sporc.iterate_episodes() if e.has_turn_data]
 print(f"diarized episodes: {len(eps):,}")
+
+if N_EPISODES and len(eps) > N_EPISODES:
+    eps.sort(key=lambda e: (e.podcast_title, e.title))
+    eps = random.Random(0).sample(eps, N_EPISODES)
+    print(f"sampled          : {len(eps):,}")
 
 docs, meta = [], []
 for e in eps:
