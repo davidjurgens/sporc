@@ -4,7 +4,7 @@ TITLE = "Topic modeling podcast transcripts with MALLET"
 
 CELLS = [
     ("md", """\
-# 6 · Topic modeling with MALLET
+# 6. Topic modeling with MALLET
 
 What is podcasting *about*? Categories give a coarse answer — someone chose
 "Society & Culture" from a dropdown once. Topic modeling gives a bottom-up
@@ -18,7 +18,7 @@ the common Python alternatives. It runs on the JVM, so we drive it through
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## Pointing at MALLET
+## 6.1 Pointing at MALLET
 
 `little_mallet_wrapper` shells out to the `mallet` binary, so it needs the path
 and a working Java. Set `MALLET_PATH` below to your install.
@@ -45,7 +45,7 @@ print("java   :", java or "NOT FOUND -- mallet needs a JVM")
 print(subprocess.run([java, "-version"], capture_output=True, text=True).stderr.splitlines()[0])
 '''),
     ("md", """\
-## Choosing the document unit
+## 6.2 Choosing the document unit
 
 This is the modelling decision that matters most, and it is easy to make
 thoughtlessly.
@@ -119,7 +119,7 @@ print(f"documents after cleaning: {len(processed):,}")
 print(f"\\nexample:\\n  {processed[0][:220]}...")
 '''),
     ("md", """\
-## Fitting
+## 6.3 Fitting
 
 `train_topic_model` writes MALLET's inputs to a directory, shells out, and reads
 the results back. On a few thousand documents this takes a minute or two.
@@ -160,7 +160,7 @@ for i, words in enumerate(topics):
     print(f"topic {i:2d}: {' '.join(words[:10])}")
 '''),
     ("md", """\
-## Naming the topics
+## 6.4 Naming the topics
 
 Top words are a prompt, not a label. Read them, read a couple of the documents
 that load highest, and name the topic yourself. Automatic labels are how topic
@@ -178,7 +178,7 @@ for t in range(min(4, NUM_TOPICS)):
     print(f"   {processed[j][:170]}...\\n")
 '''),
     ("md", """\
-## Topic prevalence by category
+## 6.5 Topic prevalence by category
 
 Do the bottom-up topics line up with the top-down categories? Where they diverge
 is usually the interesting part.
@@ -218,7 +218,7 @@ for cat in mat.index:
     print(f"  {cat:26s} -> topic {t:2d}  ({' '.join(topics[t][:6])})")
 '''),
     ("md", """\
-## Caveats
+## 6.6 Caveats
 
 * **k is a choice, not a finding.** 15 topics because we said 15. Fit several
   values and look at them; there is no "correct" k, and coherence metrics only

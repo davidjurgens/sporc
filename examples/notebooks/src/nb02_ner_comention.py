@@ -4,7 +4,7 @@ TITLE = "Named entities and co-mention networks"
 
 CELLS = [
     ("md", """\
-# 2 · Named entities and co-mention networks
+# 2. Named entities and co-mention networks
 
 Who gets talked about, and who gets talked about *together*?
 
@@ -56,7 +56,7 @@ except ImportError as e:
 print("spaCy", spacy.__version__, "| pipes:", nlp.pipe_names)
 '''),
     ("md", """\
-## Getting text out of the corpus
+## 2.1 Getting text out of the corpus
 
 Two sources, and they are not equivalent:
 
@@ -162,7 +162,7 @@ finish(ax, title="What kinds of entities appear",
 plt.show()
 '''),
     ("md", """\
-## The most-mentioned entities
+## 2.2 The most-mentioned entities
 
 Look at this list critically. ASR transcripts produce entity noise: mis-heard
 names, brand names from ads, the podcast's own title. Frequency alone is rarely
@@ -174,7 +174,7 @@ for name, n in top:
     print(f"  {n:5d}  {ent_types[name]:7s}  {name}")
 '''),
     ("md", """\
-## The co-mention graph
+## 2.3 The co-mention graph
 
 Nodes are entities, edges are "mentioned in the same turn". Two thresholds
 matter, and both are judgement calls you should state:
@@ -233,7 +233,7 @@ if G.number_of_edges():
     plt.show()
 '''),
     ("md", """\
-## Reading the communities
+## 2.4 Communities
 
 A community here is a set of entities that get discussed together. Label them by
 their highest-degree members and see whether they correspond to anything real —
@@ -247,7 +247,7 @@ if G.number_of_edges():
         print(f"   {', '.join(members)}\\n")
 '''),
     ("md", """\
-## Bridges
+## 2.5 Bridges
 
 The entities worth a second look are often not the most-mentioned but the ones
 that *connect* communities — they are where two conversations touch.
@@ -264,7 +264,7 @@ if G.number_of_edges() and core.number_of_nodes() > 3:
     print(out.round(3).to_string(index=False))
 '''),
     ("md", """\
-## Caveats
+## 2.6 Caveats
 
 * **NER on ASR output is noisy.** `en_core_web_sm` was trained on edited text.
   Transcripts have no capitalisation cues from the speaker, mis-heard proper

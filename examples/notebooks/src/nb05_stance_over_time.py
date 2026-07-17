@@ -4,7 +4,7 @@ TITLE = "Talking about an entity before and after an event"
 
 CELLS = [
     ("md", """\
-# 5 · Before and after: an entity across a two-month window
+# 5. An entity across a two-month window
 
 SPoRC is a snapshot of **1 May – 30 June 2020**, which rules out long-run
 trends. What it does contain is a sharp, precisely dated event — **25 May 2020**,
@@ -17,12 +17,12 @@ question into something closer to a natural experiment: the same shows, the same
 hosts, a discontinuity in the middle.
 
 This notebook measures how mention volume and sentiment-in-context shift around
-that date, and is careful about what "sentiment" can and cannot stand for.
+that date.
 """),
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## Framing, before any numbers
+## 5.1 What sentiment-in-context measures
 
 A caution that decides how you read everything below.
 
@@ -59,7 +59,7 @@ print(f"range: {dates.min():%Y-%m-%d} to {dates.max():%Y-%m-%d}")
 print(f"before {EVENT:%d %b}: {(dates < EVENT).sum():,} | on/after: {(dates >= EVENT).sum():,}")
 '''),
     ("md", """\
-## Finding mentions in context
+## 5.2 Finding mentions in context
 
 For each target we take a **context window** of ±25 words around the mention.
 The window is a real choice: too tight and you miss the sentence's tone; too wide
@@ -111,7 +111,7 @@ if len(df):
                                    mean_sentiment=("compound","mean")).round(3).to_string())
 '''),
     ("md", """\
-## Volume: the discontinuity
+## 5.3 Mention volume
 
 Before sentiment, look at whether anyone is talking about it at all. If the event
 did what we think, mention volume should jump on 25 May and stay up.
@@ -144,7 +144,7 @@ if len(df):
     plt.show()
 '''),
     ("md", """\
-## Sentiment, before vs after
+## 5.4 Sentiment before and after
 
 Now the tone of the language around each target. Note the y-axis: VADER's
 compound score runs −1 (most negative) to +1.
@@ -181,7 +181,7 @@ if len(df):
             .agg(["size","mean","std"]).round(3).to_string())
 '''),
     ("md", """\
-## Did the shift survive the shows changing?
+## 5.5 Controlling for which shows are talking
 
 A trap: if the mix of *podcasts* changes across the boundary, a sentiment shift
 might just be a different set of shows talking. The cleaner comparison holds the
@@ -229,7 +229,7 @@ if len(df) and "w" in dir() and len(keep) >= 3:
     plt.show()
 '''),
     ("md", """\
-## What this supports, and what it doesn't
+## 5.6 Scope and caveats
 
 **Supported:** mention volume for these targets shifts sharply around 25 May, and
 the tone of surrounding language shifts with it — including *within the same

@@ -4,19 +4,15 @@ TITLE = "Mapping the corpus: what is actually in SPoRC"
 
 CELLS = [
     ("md", """\
-# 1 · Mapping the corpus
+# 1. Mapping the corpus
 
-Before any analysis, know the shape of the thing. This notebook answers four
-questions that every later tutorial depends on:
+This notebook covers four properties of the corpus that the later tutorials
+build on: its size and composition, its date range, how many episodes carry
+speaker turns, and how many turns carry a speaker name and role.
 
-1. **How big is it, and what is it made of?**
-2. **When is it from?** (Narrower than you think, and the narrowness is useful.)
-3. **How many episodes have speaker turns?** (Not all of them.)
-4. **How many turns know who is speaking?** (Fewer than that.)
-
-The last two are the reason SPoRC analyses go wrong. An empty result is usually a
-gap in the corpus, not a fact about podcasting — and the two look identical if
-you don't check.
+The last two set up the guards the other notebooks use. `has_turn_data`
+distinguishes "no turn data here" from "nobody spoke", and role counts are a
+lower bound rather than a partition.
 
 > **Data.** These notebooks read a small pre-built subset (`subsets/tutorial`),
 > not the 57 GB corpus. See `examples/notebooks/README.md` to build it.
@@ -24,7 +20,7 @@ you don't check.
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## Corpus scale
+## 1.1 Corpus scale
 
 `get_dataset_statistics()` computes from whatever layout you point at. Pointed at
 the subset it describes the subset — that is the point of a subset built with
@@ -42,7 +38,7 @@ for k in ("total_podcasts", "total_episodes", "total_duration_hours",
     print(f"{k:32s} {v:,.1f}" if isinstance(v, float) else f"{k:32s} {v:,}")
 '''),
     ("md", """\
-## When is SPoRC from?
+## 1.2 Time span
 
 SPoRC is a **two-month snapshot**, not a longitudinal archive. Every episode was
 published between **1 May and 30 June 2020**.
@@ -87,7 +83,7 @@ finish(ax, title="The corpus is a two-month window",
 plt.show()
 '''),
     ("md", """\
-## What is it about?
+## 1.3 Categories
 
 Categories come from the Apple Podcasts taxonomy: up to ten per episode,
 `category1`–`category10`, with `category1` the primary. `sporc.constants` carries
@@ -122,7 +118,7 @@ finish(ax, title="What the subset is about",
 plt.show()
 '''),
     ("md", """\
-## The first caveat: only a third of episodes have turns
+## 1.4 Turn coverage
 
 SPoRC diarized **372,604 of 1,124,058 episodes (33%)**. The rest have a
 transcript but no speaker turns — upstream marked them `SPEAKER_DATA_UNAVAILABLE`.
@@ -153,7 +149,7 @@ print("In the FULL corpus: 372,604 / 1,124,058 = 33%.")
 print("This subset is diarized-only, so it is not representative on this axis.")
 '''),
     ("md", """\
-## The second caveat: most turns don't know who is speaking
+## 1.5 Speaker names and roles
 
 Diarization gives every turn a speaker *label* (`SPEAKER_00`), and a separate
 inference step tries to attach a *name* and a *role*. That second step is sparse:
@@ -201,7 +197,7 @@ for role, n in rows:
     print(f"  {role:20s} {n:8,}  {n/total:6.1%}")
 '''),
     ("md", """\
-## How long is an episode?
+## 1.6 Episode duration
 
 Duration is heavily right-skewed — a long tail of multi-hour episodes drags the
 mean well above the median. Report the median.
@@ -226,7 +222,7 @@ plt.show()
 print(mins.describe().round(1).to_string())
 '''),
     ("md", """\
-## Take these three facts with you
+## 1.7 Summary
 
 1. **Two months, May–June 2020.** No long-run trends. But a dateable event sits
    in the middle of the window.

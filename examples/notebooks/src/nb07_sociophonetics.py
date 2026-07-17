@@ -1,10 +1,10 @@
 """Cells for 07_sociophonetics_caught_cot.ipynb."""
 
-TITLE = "The caught/cot merger: measuring vowels SPoRC does not contain"
+TITLE = "The caught/cot merger: measuring vowels from source audio"
 
 CELLS = [
     ("md", """\
-# 7 · The caught/cot merger
+# 7. The caught/cot merger
 
 Does a speaker pronounce **caught** and **cot** the same way?
 
@@ -14,13 +14,12 @@ them; much of the South, the Inland North, and the Mid-Atlantic keep them apart.
 The distinction lives in the vowel's **first two formants** — F1 (roughly, how
 open the mouth is) and F2 (how far forward the tongue is).
 
-This notebook measures it from podcast audio. It also demonstrates the most
-important habit in corpus work: **checking whether the corpus can answer your
-question before believing an answer.**
+This notebook measures F1 and F2 for one speaker at a time, starting from the
+turn-level acoustics and going back to the source audio for the rest.
 
-## SPoRC cannot answer this. Not as shipped.
+## 7.1 The acoustics stored per turn
 
-Here is everything acoustic in a SPoRC turn:
+Each turn carries six summary numbers:
 """),
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
@@ -28,32 +27,27 @@ Here is everything acoustic in a SPoRC turn:
 ep = next(e for e in sporc.iterate_episodes() if e.has_turn_data)
 turn = next(t for t in ep.turns if t.get_audio_features())
 
-print("Everything SPoRC knows about this turn's acoustics:\\n")
+print("Turn-level acoustic features:\\n")
 for k, v in turn.get_audio_features().items():
     print(f"  {k:42s} {v:.3f}")
 
 print(f"\\n...covering {turn.duration:.1f} seconds and {turn.word_count} words.")
 '''),
     ("md", """\
-Three fatal problems for our question:
+These are turn-level means: averaged over many words and phonemes, silence
+included. They carry F1 but not F2, and nothing marks when any individual word
+was said. A vowel lasts ~100 ms, so for a per-vowel measurement we need
+timings at the phone level and both formants.
 
-1. **No F2.** There is exactly one formant, F1. The caught/cot contrast is
-   carried mostly by F2. Half the signal simply isn't there.
-2. **Turn-level means.** These six numbers are averaged over the *whole turn* —
-   many words, many phonemes, silence included. A vowel lasts ~100 ms; the turn
-   above lasts far longer.
-3. **No word timings.** Nothing says when "caught" was said.
+Note `estimate_word_audio()` is not that. It interpolates by *character offset*,
+assuming every letter takes equally long to say, so its error in a 60-second turn
+runs to seconds. Use it to find roughly where in an episode a word falls; it is
+deprecated for phonetic work.
 
-There is a `estimate_word_audio()` that looks like it solves #3. It doesn't:
-it interpolates by *character offset*, assuming every letter takes equally long
-to say. In a 60-second turn its error is measured in seconds. It's fine for
-"roughly where in the episode is this word", useless for phonetics — and as of
-v1.1 it says so.
+## 7.2 From turn to source audio
 
-## What the corpus does give us: a pointer to the audio
-
-Every turn carries an `mp3_url` and its own `start_time`/`end_time`. That is
-enough to go back to the source audio and derive alignment properly:
+Every turn carries an `mp3_url` and its own `start_time`/`end_time`, which is
+enough to go back to the source audio and align it properly:
 
 ```
 turn text + turn audio  ->  forced alignment  ->  word and phone timings
@@ -65,8 +59,8 @@ ffmpeg). It fetches **only the turn**, via an HTTP range request — a 10-second
 turn costs ~1–2 s and a few hundred KB, not a 100 MB episode download.
 
 That fetch is the cheap half. Aligning the turn is what actually costs, and it
-scales with the turn's length rather than the word's — see "Now do it at scale"
-below, where that turns out to govern the whole notebook.
+scales with the turn's length rather than the word's — see 7.5, where that
+governs how the tokens are collected.
 """),
     ("code", '''\
 from sporc.phonetics import (fetch_turn_audio, align_turn, measure_formants,
@@ -77,7 +71,7 @@ print(f"THOUGHT set (the 'caught' class): {len(THOUGHT_WORDS)} words")
 print(f"LOT set     (the 'cot' class)   : {len(LOT_WORDS)} words")
 '''),
     ("md", """\
-## The trap that would have silently ruined this
+## 7.3 Lexical sets: membership comes from the word
 
 Lexical-set membership must come from the **word**, not from a pronunciation
 dictionary. CMUdict lists *caught* as `K AA1 T` — the **LOT** vowel — because the
@@ -98,7 +92,7 @@ print("\\n  ^ 'caught' is K AA1 T in cmudict (already merged), yet it is a")
 print("    THOUGHT word. The set comes from the word, never from the vowel.")
 '''),
     ("md", """\
-## One token, end to end
+## 7.4 One token, end to end
 
 Find a turn containing a target word, fetch its audio, align it, and look at
 where the phones actually fall.
@@ -154,7 +148,7 @@ for w in words[max(0, i-3):i+4]:
     print(f"   {w.start:6.3f}-{w.end:6.3f}  {w.word:<14s}{mark}")
 '''),
     ("md", """\
-### Down to the phone
+### 7.4.1 Down to the phone
 
 Word timing isn't enough — we need the *vowel*, not the word. Taking the word's
 midpoint would be wrong for anything but a simple CVC: in *across* (`AH0 K R AO1
@@ -190,7 +184,7 @@ print(f"\\nF1 = {vals['f1']:.0f} Hz   F2 = {vals['f2']:.0f} Hz"
 > durations back in the 50–150 ms range you see above. Treat the boundaries as
 > good to a few tens of ms — not as hand-corrected Praat segmentation.
 
-## Now do it at scale — and *whose* tokens matter
+## 7.5 Collecting tokens at scale
 
 `find_word_tokens()` runs the whole chain over search results. Two things govern
 how you call it, and both are easy to get wrong.
@@ -260,7 +254,7 @@ print(df.groupby("lexical_set").agg(n=("f1", "size"), f1=("f1", "mean"),
                                     f2=("f2", "mean")).round(0).to_string())
 '''),
     ("md", """\
-## Why those raw means mean nothing
+## 7.6 Lobanov normalization
 
 Pooling speakers is the classic sociophonetics error. Formant frequencies scale
 with vocal-tract length, so raw F1/F2 differences across speakers mostly measure
@@ -298,7 +292,7 @@ else:
     print("find_word_tokens(), or widen PROBE, and re-run.")
 '''),
     ("md", """\
-## The vowel space
+## 7.7 The vowel space
 
 The conventional sociophonetic plot: **F2 on x, F1 on y, both reversed**, so the
 axes mirror the mouth — high/front vowels to the upper left, low/back to the
@@ -352,7 +346,7 @@ else:
     print("Not enough normalized tokens to plot.")
 '''),
     ("md", """\
-## Putting a number on it: the Pillai score
+## 7.8 The Pillai score
 
 Eyeballing ellipse overlap isn't a measurement. The standard statistic is the
 **Pillai score** from a MANOVA of (F1, F2) on lexical set:
@@ -413,19 +407,13 @@ if len(res):
     plt.show()
 '''),
     ("md", """\
-## What this does and does not show
+## 7.9 Scope and caveats
 
-Worth being precise, because the plot looks more authoritative than the data
-warrants.
+The plot is speaker-level merger status for whoever is in the subset. It is not
+a dialect map: SPoRC carries no region, age, gender, or ethnicity, so there is
+nothing to generalise a Pillai score to.
 
-**It shows** that SPoRC's audio can be re-aligned and measured, and that
-individual speakers' low back vowels can be compared on a common scale.
-
-**It does not show a dialect map.** SPoRC carries no region, age, gender, or
-ethnicity for speakers. This is *speaker-level* merger status for whoever happens
-to be in the subset — you cannot generalise it to a place.
-
-**Other limits to state in any write-up:**
+Limits to state in any write-up:
 
 * **n.** A few dozen tokens per speaker is thin for a merger claim. Sociophonetic
   studies typically want 20+ tokens *per class per speaker*.
@@ -440,11 +428,7 @@ to be in the subset — you cannot generalise it to a place.
   music-bedded. Formant estimation assumes rather better recording conditions.
 * **Speaker identity is inferred.** `inferred_speaker_name` is itself a model
   output, and ~90% of turns have no name at all (notebook 01). Tokens grouped
-  under one "speaker" may not all be that person.
-
-**The transferable lesson:** the corpus said no. Six turn-level means with no F2
-cannot answer a vowel question, and a function that *looks* like word alignment
-was interpolating from character offsets. Checking what the fields actually
-contain — before trusting them — is the whole job.
+  under one name may not all be the same person, and `lobanov_normalize` keys on
+  the name — two people sharing one pool together.
 """),
 ]

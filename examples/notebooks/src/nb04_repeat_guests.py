@@ -4,7 +4,7 @@ TITLE = "Do repeat guests tell the same stories?"
 
 CELLS = [
     ("md", """\
-# 4 · Language across repeat guest appearances
+# 4. Language across repeat guest appearances
 
 Someone with a book, a startup, or a cause goes on the podcast circuit: five
 shows in three weeks, the same story each time. Or do they? Does a guest tailor
@@ -24,7 +24,7 @@ includes people who were merely *talked about*. We reuse that fix here.
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## Finding real repeat guests
+## 4.1 Finding repeat guests
 
 `guest_speaker_labels` maps a guest's name to the diarization label they were
 assigned (`{"Jane Smith": "SPEAKER_01"}`). Non-empty means someone was actually
@@ -66,7 +66,7 @@ for g, apps in sorted(repeat.items(), key=lambda kv: -len({e.podcast_title for e
     print(f"  {len(pods)} shows, {len(apps)} eps   {g}")
 '''),
     ("md", """\
-## Extracting one person's speech
+## 4.2 Extracting one person's speech
 
 The speaker label is per-episode: `SPEAKER_01` in one episode has nothing to do
 with `SPEAKER_01` in another. So we look up the label per appearance and filter
@@ -115,7 +115,7 @@ if len(app):
                                        "shows", ascending=False).head(10).to_string())
 '''),
     ("md", """\
-## Do they repeat themselves?
+## 4.3 Phrase overlap across appearances
 
 The test: is a guest's speech on show A more similar to **their own** speech on
 show B than to a **different guest's** speech?
@@ -180,7 +180,7 @@ if within and between:
     plt.show()
 '''),
     ("md", """\
-## The reused phrases
+## 4.4 The reused phrases
 
 Similarity is an aggregate. The concrete version: which *exact* phrases does a
 guest use on more than one show? Long shared n-grams are the fingerprint of
@@ -237,7 +237,7 @@ if len(app) and "rep" in dir() and len(rep):
     plt.show()
 '''),
     ("md", """\
-## Caveats
+## 4.5 Caveats
 
 * **This is a lower bound on repeat guests.** Only diarized episodes have turns
   (~33%), and the guest must have been both diarized *and* correctly named. A

@@ -88,6 +88,9 @@ accepted, and `huggingface-cli login`.
 
 ### 3. Run
 
+The notebooks ship executed, so you can read them here or on GitHub without
+running anything. To run them yourself:
+
 ```bash
 cd examples/notebooks
 jupyter lab
@@ -117,14 +120,22 @@ src/nb01_cartography.py   ->   01_corpus_cartography.ipynb
 Edit the source, then rebuild, and commit both:
 
 ```bash
-python _build.py          # all
-python _build.py 07       # just one
-python _build.py --check  # are the .ipynb current with src/?
+python _build.py            # all
+python _build.py 07         # just one
+python _build.py --check    # are the .ipynb current with src/?
+python _build.py --execute  # rebuild and re-run, refreshing outputs
 ```
 
+The committed `.ipynb` are **executed**: they carry their outputs and figures, so
+they read on GitHub without building the subset first. A plain build keeps the
+outputs of any cell whose source didn't change, so fixing a typo won't throw away
+a figure that took twelve minutes to produce; `--execute` is what re-runs them,
+and it needs `subsets/tutorial` on disk.
+
 Rebuilding is a no-op in git when nothing changed, so a diff on a `.ipynb` means
-a real edit. `--check` catches the case that motivated it: a source gaining a
-section that never reached the notebook, which is easy to miss and shipped once.
+a real edit. `--check` compares sources only, and catches the case that motivated
+it: a source gaining a section that never reached the notebook, which is easy to
+miss and shipped once.
 
 `_viz.py` holds the shared house style. Its palette is a validated set — the hue
 *order* is what keeps it colour-vision-safe, so don't re-order it or extend past

@@ -4,7 +4,7 @@ TITLE = "Turn-taking: gaps, overlap, and the shape of a conversation"
 
 CELLS = [
     ("md", """\
-# 8 · Conversational dynamics
+# 8. Conversational dynamics
 
 A transcript tells you what was said. The **timing** tells you how the
 conversation went: who talks longest, how fast the exchange is, where people
@@ -17,7 +17,7 @@ rather than a computation.
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## Precomputed metrics
+## 8.1 Precomputed metrics
 
 `filter_episodes_by_metrics()` reads `episode_metrics.parquet` and touches no
 partitions, so you can narrow to the episodes you want *before* paying to load
@@ -45,7 +45,7 @@ if hits:
 > the turn count rather than a speaker count. Use `num_main_speakers` from the
 > episode catalog instead.
 
-## Talk time is not turn count
+## 8.2 Talk time and turn count
 
 Two ways to ask "who dominated?": count turns, or sum seconds. They disagree
 whenever one speaker gives long answers and the other asks short questions —
@@ -99,7 +99,7 @@ finish(ax, title="Taking many turns is not the same as talking a lot",
 plt.show()
 '''),
     ("md", """\
-## Gaps and overlap
+## 8.3 Gaps and overlap
 
 The gap between one turn ending and the next beginning is the pulse of a
 conversation. Negative gaps are **overlap** — two people talking at once, which
@@ -132,7 +132,7 @@ finish(ax, title="The pulse of a conversation",
 plt.show()
 '''),
     ("md", """\
-## The shape of an episode
+## 8.4 The shape of an episode
 
 `sliding_window_by_time()` chunks an episode by wall-clock time, which is the
 natural unit for asking how something drifts: does the pace pick up? Does one
@@ -171,7 +171,7 @@ fig.tight_layout()
 plt.show()
 '''),
     ("md", """\
-## Across many episodes
+## 8.5 Across many episodes
 
 One episode is an anecdote. The precomputed metrics let us look at the
 distribution over hundreds without loading a single partition.
@@ -195,7 +195,7 @@ if hits:
         print(f"correlation: r = {d.avg_words_per_second.corr(d.avg_gap_duration):+.2f}")
 '''),
     ("md", """\
-## Caveats
+## 8.6 Caveats
 
 * **Turn boundaries are diarization output.** A missed speaker change merges two
   turns into one; a spurious one splits a turn. Gap statistics inherit those

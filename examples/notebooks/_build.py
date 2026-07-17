@@ -5,9 +5,17 @@ Notebook JSON is unreviewable in a diff, so each tutorial is written here as a
 list of (kind, text) cells and rendered to .ipynb. Edit the source, re-run this,
 commit both.
 
-    python examples/notebooks/_build.py            # build all
-    python examples/notebooks/_build.py 07         # build one
-    python examples/notebooks/_build.py --check    # verify .ipynb match src/
+    python examples/notebooks/_build.py             # build all
+    python examples/notebooks/_build.py 07          # build one
+    python examples/notebooks/_build.py --check     # verify .ipynb match src/
+    python examples/notebooks/_build.py --execute   # build, then run so the
+                                                    # .ipynb ship with outputs
+
+The committed .ipynb are executed: they carry their outputs and figures so the
+notebooks read on GitHub without anyone building the subset first. A plain build
+keeps the outputs of cells whose source did not change, so rebuilding after a
+prose edit does not throw away figures that took minutes to produce. Only
+--execute re-runs, and it needs `subsets/tutorial` on disk.
 """
 
 import importlib
@@ -18,6 +26,9 @@ import nbformat as nbf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+# 07 fetches and aligns real audio for ~12 minutes; 06 waits on MALLET.
+EXECUTE_TIMEOUT = 2400
 
 
 def render(stem: str, title: str, cells) -> nbf.NotebookNode:
@@ -48,8 +59,39 @@ def render(stem: str, title: str, cells) -> nbf.NotebookNode:
     return nb
 
 
+def _sources(nb) -> list:
+    """The cell sources, which is what src/ owns. Outputs come from executing."""
+    return [(c.cell_type, c.source) for c in nb.cells]
+
+
+def carry_outputs(fresh, path: str):
+    """
+    Copy outputs from the notebook on disk onto a fresh render.
+
+    The .ipynb ship executed, so a rebuild must not silently throw away figures
+    that cost minutes to produce. Outputs are only reused where the cell's source
+    is unchanged; edit a cell and its stale output is dropped rather than left
+    sitting under new code.
+    """
+    if not os.path.exists(path):
+        return fresh
+    old = nbf.read(path, as_version=4)
+    by_source = {}
+    for c in old.cells:
+        if c.cell_type == "code" and c.get("outputs"):
+            by_source[c.source] = (c["outputs"], c.get("execution_count"))
+    for c in fresh.cells:
+        if c.cell_type != "code":
+            continue
+        got = by_source.get(c.source)
+        if got:
+            c["outputs"], c["execution_count"] = got
+    return fresh
+
+
 def build(stem: str, title: str, cells) -> str:
-    nb = render(stem, title, cells)
+    nb = carry_outputs(render(stem, title, cells),
+                       os.path.join(HERE, f"{stem}.ipynb"))
     path = os.path.join(HERE, f"{stem}.ipynb")
     with open(path, "w") as f:
         nbf.write(nb, f)
@@ -103,33 +145,70 @@ NOTEBOOKS = {
 }
 
 
+def execute(stem: str) -> bool:
+    """Run a notebook in place so it ships with its outputs and figures."""
+    from nbclient import NotebookClient
+    from nbclient.exceptions import CellExecutionError
+
+    path = os.path.join(HERE, f"{stem}.ipynb")
+    nb = nbf.read(path, as_version=4)
+    client = NotebookClient(
+        nb, timeout=EXECUTE_TIMEOUT, kernel_name="python3",
+        resources={"metadata": {"path": HERE}},
+    )
+    try:
+        client.execute()
+        ok = True
+    except CellExecutionError as e:
+        print(f"  FAILED: {str(e)[-300:]}")
+        ok = False
+    # Written either way: a failed run's traceback is more use on disk than a
+    # notebook that looks like it was never run.
+    nbf.write(nb, path)
+    return ok
+
+
 def main(argv):
-    args = [a for a in argv[1:] if a != "--check"]
-    check = "--check" in argv
-    want = args or None
-    stale = []
+    flags = {a for a in argv[1:] if a.startswith("--")}
+    want = [a for a in argv[1:] if not a.startswith("--")] or None
+    check = "--check" in flags
+    run = "--execute" in flags
+    stale, failed = [], []
     for stem, mod_name in NOTEBOOKS.items():
         if want and not any(w in stem for w in want):
             continue
         mod = importlib.import_module(f"src.{mod_name}")
         importlib.reload(mod)
+        path = os.path.join(HERE, f"{stem}.ipynb")
         if check:
-            path = os.path.join(HERE, f"{stem}.ipynb")
-            # nbf.write appends a trailing newline that nbf.writes omits, so
-            # compare the serialized forms rather than raw file text.
-            fresh = nbf.writes(render(stem, mod.TITLE, mod.CELLS))
-            on_disk = (nbf.writes(nbf.read(path, as_version=4))
-                       if os.path.exists(path) else "")
+            # Compare sources, not whole files: the shipped .ipynb carry outputs
+            # that src/ knows nothing about, so a serialized compare would call
+            # every executed notebook stale.
+            fresh = _sources(render(stem, mod.TITLE, mod.CELLS))
+            on_disk = _sources(nbf.read(path, as_version=4)) if os.path.exists(path) else []
             status = "ok" if fresh == on_disk else "STALE"
             if status == "STALE":
                 stale.append(stem)
-            print(f"{status:5} {stem}.ipynb")
+            n_out = 0
+            if os.path.exists(path):
+                n_out = sum(1 for c in nbf.read(path, as_version=4).cells
+                            if c.cell_type == "code" and c.get("outputs"))
+            print(f"{status:5} {stem}.ipynb  ({n_out} cells with output)")
             continue
-        path = build(stem, mod.TITLE, mod.CELLS)
-        print(f"built {os.path.relpath(path, HERE)}  ({len(mod.CELLS)} cells)")
+        build(stem, mod.TITLE, mod.CELLS)
+        print(f"built {stem}.ipynb  ({len(mod.CELLS)} cells)", flush=True)
+        if run:
+            print(f"  executing...", flush=True)
+            if not execute(stem):
+                failed.append(stem)
+            else:
+                print("  ok", flush=True)
     if stale:
         print(f"\n{len(stale)} notebook(s) out of date with src/. Re-run without "
               f"--check, and commit the .ipynb alongside the source.")
+        return 1
+    if failed:
+        print(f"\n{len(failed)} notebook(s) failed to execute: {', '.join(failed)}")
         return 1
     return 0
 

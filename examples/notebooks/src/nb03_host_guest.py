@@ -4,7 +4,7 @@ TITLE = "Host-guest networks, and the field that lies to you"
 
 CELLS = [
     ("md", """\
-# 3 · Host–guest networks
+# 3. Host-guest networks
 
 Podcasts share guests. A person appears on one show, then another, and the shows
 they connect form a network — the "podcast circuit". Mapping it tells you which
@@ -20,7 +20,7 @@ version, shows how to catch that it's wrong, and then builds the real one.
     ("code", "PREAMBLE"),
     ("code", "DATA_CELL"),
     ("md", """\
-## The naive network
+## 3.1 A network from guest_predicted_names
 
 Take every episode, connect its hosts to its guests. Done.
 """),
@@ -46,7 +46,7 @@ for name, pods in top:
     print(f"  {len(pods):3d} podcasts   {name}")
 '''),
     ("md", """\
-## Stop. Read that list.
+## 3.2 Reading the guest list
 
 Depending on your subset you will likely see names like **George Floyd**,
 **Breonna Taylor**, **Anthony Fauci**, **Joe Biden** — possibly **Jesus Christ**,
@@ -88,7 +88,7 @@ Corpus-wide: **37,275 names look like cross-podcast guests. 940 survive
 validation — 2.5%.**
 """),
     ("md", """\
-## The field that tells the truth
+## 3.3 Validating against guest_speaker_labels
 
 Diarization assigns speaker labels (`SPEAKER_00`, ...). A separate step tries to
 attach names to those labels. When a guest actually **speaks**, they get an entry
@@ -136,7 +136,7 @@ print("An empty guest_speaker_labels with one main speaker means a solo")
 print("monologue: the 'guests' are people the host talked about.")
 '''),
     ("md", """\
-## Measuring the damage
+## 3.4 How many claimed guests survive
 
 How many claimed guest appearances survive the check that the guest actually got
 a speaker label?
@@ -180,7 +180,7 @@ finish(ax, title="Most 'guests' in SPoRC never say a word",
 plt.show()
 '''),
     ("md", """\
-## The network, built properly
+## 3.5 The validated network
 
 Now connect podcasts through guests who **actually spoke**. Nodes are podcasts;
 an edge means they share a validated guest.
@@ -243,7 +243,7 @@ else:
     print("is selected to contain some; see examples/notebooks/README.md.")
 '''),
     ("md", """\
-## Who is central?
+## 3.6 Centrality
 
 Degree counts links. Betweenness finds the shows that *bridge* otherwise separate
 scenes — often more interesting, since a bridge show is where communities meet.
@@ -259,7 +259,7 @@ if G.number_of_edges():
     print(cen.round(3).to_string(index=False))
 '''),
     ("md", """\
-## What to take from this
+## 3.7 Caveats
 
 **The finding.** `guest_predicted_names` answers "who was named in this episode",
 not "who was on this episode". For a corpus published in May–June 2020, the most
