@@ -296,6 +296,10 @@ class SPORCDataset:
             Dict with ``podcasts`` (count resolved), ``files`` (count now
             available locally) and ``unresolved`` (entries not found).
 
+            ``files`` is not a download count: it counts partitions present
+            afterwards, so already-cached files and a local ``parquet_dir``
+            both report nonzero without fetching anything.
+
         Raises:
             ValueError: if the subset resolves to no podcasts at all.
         """
@@ -345,9 +349,9 @@ class SPORCDataset:
 
         from .source import HubDataSource
 
-        # Prefetching a local directory is a silent no-op that reports
-        # "files: 0", which reads like an empty subset rather than a source that
-        # cannot fetch. Say so.
+        # Prefetching a local directory downloads nothing, but still reports a
+        # nonzero "files" (which counts partitions now *available*, not ones
+        # fetched), so the return value alone looks like a successful fetch.
         if not isinstance(getattr(backend, "_source", None), HubDataSource):
             logger.warning(
                 "prefetch() has nothing to fetch: this dataset reads a local "
