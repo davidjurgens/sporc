@@ -20,29 +20,35 @@ the common Python alternatives. It runs on the JVM, so we drive it through
     ("md", """\
 ## 6.1 Pointing at MALLET
 
-`little_mallet_wrapper` shells out to the `mallet` binary, so it needs the path
-and a working Java. Set `MALLET_PATH` below to your install.
+`little_mallet_wrapper` shells out to the `mallet` binary, so it needs MALLET on
+disk and a working Java. Rather than hard-code a path, we resolve it from the
+environment: set the **`MALLET_PATH`** environment variable to your MALLET
+install's `bin/mallet`, or put `mallet` on your `PATH`. Java is found the same
+way (`PATH`, or a `JAVA_HOME`).
 """),
     ("code", '''\
 import os, shutil, subprocess
 
-CANDIDATES = [
-    os.environ.get("MALLET_PATH"),
-    "/home/jurgens/projects/police-killings-language/mallet-2.0.8/bin/mallet",
-    shutil.which("mallet"),
-]
-MALLET_PATH = next((p for p in CANDIDATES if p and os.path.exists(p)), None)
+# Resolve MALLET from the environment, never a fixed path: the MALLET_PATH env
+# var if set, otherwise a `mallet` on PATH.
+MALLET_PATH = os.environ.get("MALLET_PATH") or shutil.which("mallet")
 
-if not MALLET_PATH:
+if not MALLET_PATH or not os.path.exists(MALLET_PATH):
     raise SystemExit(
-        "MALLET not found. Download it from https://mimno.github.io/Mallet/ "
-        "and set MALLET_PATH (or the env var of the same name)."
+        "MALLET not found. Download it from https://mimno.github.io/Mallet/, "
+        "then set the MALLET_PATH environment variable to its bin/mallet, or "
+        "put `mallet` on your PATH."
     )
 
 java = shutil.which("java")
-print("mallet :", MALLET_PATH)
-print("java   :", java or "NOT FOUND -- mallet needs a JVM")
-print(subprocess.run([java, "-version"], capture_output=True, text=True).stderr.splitlines()[0])
+if not java:
+    raise SystemExit("Java not found on PATH -- MALLET runs on the JVM.")
+
+# Print how each was resolved, not an absolute path, so this notebook's output
+# stays free of machine-specific locations.
+print("mallet : resolved from", "MALLET_PATH" if os.environ.get("MALLET_PATH") else "PATH")
+print("java   :", subprocess.run([java, "-version"], capture_output=True,
+                                  text=True).stderr.splitlines()[0])
 '''),
     ("md", """\
 ## 6.2 Choosing the document unit

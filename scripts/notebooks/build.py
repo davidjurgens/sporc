@@ -126,14 +126,18 @@ if sporc.__version__ < "1.0":
 
 from _viz import apply_style, finish, PALETTE, INK, INK_SECONDARY, INK_MUTED
 apply_style()
-print("sporc", sporc.__version__, "from", os.path.dirname(sporc.__file__))
+# Report the location relative to here, so the printed output does not embed
+# whoever's home directory this happened to be built in.
+print("sporc", sporc.__version__, "from",
+      os.path.relpath(os.path.dirname(sporc.__file__)))
 '''
 
 DATA_CELL = '''\
 from sporc import SPORCDataset
 
-# Built by scripts/make_subset.py; see examples/notebooks/README.md.
-SUBSET = os.path.abspath("../../subsets/tutorial")
+# Built by scripts/make_subset.py; see examples/notebooks/README.md. Kept
+# relative so nothing machine-specific leaks into the logged path.
+SUBSET = "../../subsets/tutorial"
 sporc = SPORCDataset(parquet_dir=SUBSET)
 print(sporc)
 '''

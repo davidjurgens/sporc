@@ -61,6 +61,15 @@ python -c "import nltk; nltk.download('cmudict'); nltk.download('vader_lexicon')
 python -m spacy download en_core_web_sm
 ```
 
+Notebook 06 needs [MALLET](https://mimno.github.io/Mallet/) and a JVM. It finds
+them from the environment, so point it at your install rather than editing the
+notebook:
+
+```bash
+export MALLET_PATH=/path/to/mallet/bin/mallet   # or put `mallet` on PATH
+java -version                                         # any JVM on PATH
+```
+
 ### 2. Build the tutorial subset
 
 The notebooks read `subsets/tutorial`, a small self-contained layout — not the
