@@ -248,3 +248,241 @@ class TestMeasureFormants:
         audio = np.zeros(16000, dtype="float32")
         vals = measure_formants(audio, 16000, 0.5, 0.5005)
         assert vals["f1"] is None and vals["f2"] is None
+
+
+@pytest.mark.unit
+class TestPhoneClipGuard:
+    """
+    forced_align makes the target sequence explain all of the audio, so
+    phone-aligning a word against a whole turn forces its handful of phones
+    across minutes of other speech and returns a confident, meaningless
+    answer. The guard turns that into an error.
+    """
+
+    def _turn(self, secs):
+        return {"turn_text": "we talk a lot", "start_time": 0.0,
+                "end_time": secs, "mp3_url": "u", "speaker_name": "Ann",
+                "episode_id": "e", "podcast_id": "p"}
+
+    def test_rejects_a_whole_turn(self):
+        import numpy as np
+        from sporc.phonetics import MAX_PHONE_CLIP_SECONDS, align_turn
+
+        secs = MAX_PHONE_CLIP_SECONDS + 30
+        audio = np.zeros(int(16000 * secs), dtype="float32")
+
+        with pytest.raises(PhoneticsError, match="whole turn|one word's clip"):
+            align_turn(self._turn(secs), audio=audio, sample_rate=16000,
+                       level="phone", word="talk")
+
+    def test_error_names_the_right_entry_point(self):
+        import numpy as np
+        from sporc.phonetics import MAX_PHONE_CLIP_SECONDS, align_turn
+
+        secs = MAX_PHONE_CLIP_SECONDS + 1
+        audio = np.zeros(int(16000 * secs), dtype="float32")
+
+        with pytest.raises(PhoneticsError, match="measure_word_in_turn"):
+            align_turn(self._turn(secs), audio=audio, sample_rate=16000,
+                       level="phone", word="talk")
+
+    def test_guard_fires_before_any_model_work(self, monkeypatch):
+        # It must reject on duration alone -- loading the model to find out
+        # would cost more than the check saves.
+        import numpy as np
+        import sporc.phonetics as ph
+
+        def boom():
+            raise AssertionError("model must not be loaded to reject a long clip")
+
+        monkeypatch.setattr(ph, "_phone_model", boom)
+        audio = np.zeros(int(16000 * 60), dtype="float32")
+
+        with pytest.raises(PhoneticsError):
+            ph.align_turn(self._turn(60), audio=audio, sample_rate=16000,
+                          level="phone", word="talk")
+
+
+@pytest.mark.unit
+class TestMaxTurnDuration:
+    """
+    Locating a word means aligning the turn's whole audio at ~0.45x realtime,
+    so cost tracks the turn, not the word. Corpus turns are long -- median ~64s
+    for a common word, longest seen 3,240s -- so without a cap a single token
+    can take tens of minutes. This is what made notebook 07 time out.
+    """
+
+    class _FakeSporc:
+        def __init__(self, durations):
+            self._durations = durations
+            self._parquet_backend = self
+
+        def search_turns(self, word, mode=None, podcast_id=None, limit=None):
+            return [{"turn_text": f"we {word} a lot", "start_time": 0.0,
+                     "end_time": d, "episode_id": f"e{i}",
+                     "podcast_id": "p", "speaker_name": "Ann"}
+                    for i, d in enumerate(self._durations)]
+
+        def get_episode_by_id(self, eid):
+            return {"mp3_url": f"http://example.com/{eid}.mp3"}
+
+    def _run(self, monkeypatch, durations, **kw):
+        import sporc.phonetics as ph
+
+        seen = []
+
+        def fake_measure(turn, word, **kwargs):
+            seen.append(float(turn["end_time"]) - float(turn["start_time"]))
+            return None
+
+        monkeypatch.setattr(ph, "measure_word_in_turn", fake_measure)
+        ph.find_word_tokens(self._FakeSporc(durations), "talk", limit=10, **kw)
+        return seen
+
+    def test_long_turns_are_never_fetched(self, monkeypatch):
+        seen = self._run(monkeypatch, [5.0, 3240.0, 10.0], max_turn_duration=30.0)
+
+        assert 3240.0 not in seen
+        assert sorted(seen) == [5.0, 10.0]
+
+    def test_cap_is_inclusive_of_the_boundary(self, monkeypatch):
+        seen = self._run(monkeypatch, [30.0], max_turn_duration=30.0)
+
+        assert seen == [30.0]
+
+    def test_none_disables_the_cap(self, monkeypatch):
+        seen = self._run(monkeypatch, [5.0, 3240.0], max_turn_duration=None)
+
+        assert 3240.0 in seen
+
+    def test_default_caps_by_default(self, monkeypatch):
+        # The default matters: it is what stops a notebook from hanging.
+        seen = self._run(monkeypatch, [5.0, 3240.0])
+
+        assert 3240.0 not in seen
+
+    def test_skipped_turns_are_reported(self, monkeypatch, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="sporc.phonetics"):
+            self._run(monkeypatch, [5.0, 3240.0, 900.0], max_turn_duration=30.0)
+
+        # Silently returning only short turns would read as "the corpus has few
+        # tokens of this word".
+        assert "skipped 2" in caplog.text
+
+
+@pytest.mark.unit
+class TestLobanovSpeakerIdentity:
+    """
+    Lobanov exists to remove the vocal-tract-length confound, so what counts as
+    "a speaker" is the whole point. Two ways to get it wrong: pool the corpus's
+    NO_INFERRED_SPEAKER placeholder (its most common value) into one person, or
+    merge same-named people across shows.
+    """
+
+    @staticmethod
+    def _rows(specs):
+        import pandas as pd
+        rows = []
+        for pid, spk, f1, f2 in specs:
+            rows.append({"speaker": spk, "podcast_id": pid, "f1": f1, "f2": f2,
+                         "lexical_set": "LOT", "word": "not"})
+        return pd.DataFrame(rows)
+
+    def test_placeholder_speakers_are_dropped(self):
+        from sporc.phonetics import lobanov_normalize
+
+        df = self._rows([("p1", "NO_INFERRED_SPEAKER", 700 + i, 1200 + i)
+                         for i in range(10)])
+
+        out = lobanov_normalize(df, min_tokens=3)
+
+        # Pooling these would z-score across ten different vocal tracts.
+        assert out.empty
+
+    def test_anonymous_diarization_labels_are_dropped(self):
+        from sporc.phonetics import lobanov_normalize
+
+        df = self._rows([("p1", "SPEAKER_00", 700 + i, 1200 + i)
+                         for i in range(10)])
+
+        out = lobanov_normalize(df, min_tokens=3)
+
+        assert out.empty
+
+    def test_real_speakers_survive_alongside_placeholders(self):
+        from sporc.phonetics import lobanov_normalize
+
+        specs = [("p1", "NO_INFERRED_SPEAKER", 700 + i, 1200 + i) for i in range(6)]
+        specs += [("p1", "Ann Real", 800 + i * 10, 1300 + i * 10) for i in range(6)]
+
+        out = lobanov_normalize(df := self._rows(specs), min_tokens=3)
+
+        assert set(out.speaker.unique()) == {"Ann Real"}
+        assert len(out) == 6
+
+    def test_a_name_is_one_speaker_across_podcasts(self):
+        from sporc.phonetics import lobanov_normalize
+
+        # The same guest on two shows is one person, and pooling their tokens
+        # is what makes min_tokens reachable. The accepted cost is that two
+        # distinct people sharing a name pool too -- SPoRC has no canonical
+        # speaker id yet.
+        specs = [("p1", "John Smith", 700 + i, 1200 + i) for i in range(3)]
+        specs += [("p2", "John Smith", 700 + i, 1200 + i) for i in range(3)]
+
+        out = lobanov_normalize(self._rows(specs), min_tokens=5)
+
+        assert len(out) == 6
+        assert out.f1_z.mean() == pytest.approx(0, abs=1e-9)
+
+    def test_min_tokens_counts_a_name_across_podcasts(self):
+        from sporc.phonetics import lobanov_normalize
+
+        # Three tokens on each of two shows is six for this person, not two
+        # speakers with three each.
+        specs = [("p1", "John Smith", 700 + i, 1200 + i) for i in range(3)]
+        specs += [("p2", "John Smith", 800 + i, 1300 + i) for i in range(3)]
+
+        out = lobanov_normalize(self._rows(specs), min_tokens=6)
+
+        assert len(out) == 6
+
+    def test_works_without_a_podcast_id_column(self):
+        from sporc.phonetics import lobanov_normalize
+
+        df = self._rows([("p1", "Ann", 700 + i, 1200 + i) for i in range(5)])
+        df = df.drop(columns="podcast_id")
+
+        out = lobanov_normalize(df, min_tokens=3)
+
+        assert len(out) == 5
+
+    def test_dropped_placeholders_are_reported(self, caplog):
+        import logging
+
+        from sporc.phonetics import lobanov_normalize
+
+        specs = [("p1", "NO_INFERRED_SPEAKER", 700, 1200) for _ in range(4)]
+        specs += [("p1", "Ann Real", 800 + i * 10, 1300 + i * 10) for i in range(4)]
+
+        with caplog.at_level(logging.INFO, logger="sporc.phonetics"):
+            lobanov_normalize(self._rows(specs), min_tokens=3)
+
+        assert "unidentified speakers" in caplog.text
+
+    def test_null_podcast_id_does_not_discard_tokens(self):
+        # pandas 3 makes a null part poison the whole concatenated key (NA),
+        # and groupby drops NA keys -- so this silently returned nothing at all
+        # for measurements built without a podcast_id.
+        from sporc.phonetics import FormantMeasurement, lobanov_normalize
+
+        rows = [FormantMeasurement("cot", "AA", "LOT", 700 + i, 1200 + i, None,
+                                   0.0, 0.1, speaker="A")
+                for i in range(6)]
+
+        out = lobanov_normalize(rows, min_tokens=5)
+
+        assert len(out) == 6
+        assert {"f1_z", "f2_z"} <= set(out.columns)

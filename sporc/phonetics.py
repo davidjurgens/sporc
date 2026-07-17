@@ -69,6 +69,27 @@ WORD_ALIGN_MODEL = "WAV2VEC2_ASR_BASE_960H"
 #: CTC model used for phone-level alignment. Outputs eSpeak-style IPA.
 PHONE_ALIGN_MODEL = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 
+# Longest clip level="phone" will accept. A single word is well under a second;
+# anything past a few seconds means a whole turn was passed by mistake, which
+# forced_align would answer with a plausible-looking wrong alignment.
+MAX_PHONE_CLIP_SECONDS = 5.0
+
+#: Speaker values that name no one. SPoRC writes NO_INFERRED_SPEAKER when name
+#: attribution found nobody, and it is the most common value by far -- in a
+#: sample of probe-word turns it outnumbers the commonest real name 422 to 74.
+#: Grouping by it pools hundreds of different people into one "speaker", which
+#: is the exact confound per-speaker normalization exists to remove.
+PLACEHOLDER_SPEAKERS = frozenset({
+    "NO_INFERRED_SPEAKER",
+    "NO_INFERRED_ROLE",
+    "SPEAKER_UNKNOWN",
+})
+
+#: Raw diarization labels (SPEAKER_00, ...). These are per-episode: SPEAKER_00
+#: in one episode is not SPEAKER_00 in the next, so they cannot identify a
+#: person across a podcast the way an inferred name can.
+_ANON_SPEAKER_RE = re.compile(r"^SPEAKER_\d+$", re.I)
+
 #: Sample rate the aligners expect.
 SAMPLE_RATE = 16000
 
@@ -302,7 +323,12 @@ def fetch_turn_audio(turn: Any, pad: float = 0.3,
                      sample_rate: int = SAMPLE_RATE,
                      timeout: float = 120.0):
     """
-    Fetch the audio for a single turn as a mono float32 numpy array.
+    Fetch a single turn's audio, as an ``(audio, sample_rate)`` pair.
+
+    Note the pair: ``align_turn`` takes the array and the rate as separate
+    arguments, so it is ``audio, sr = fetch_turn_audio(t)`` and then
+    ``align_turn(t, audio, sample_rate=sr)``. Passing the pair straight through
+    fails inside numpy rather than here.
 
     Only the turn's own span is downloaded: ffmpeg seeks into the remote file
     with an HTTP range request, so cost scales with turn length, not episode
@@ -505,6 +531,20 @@ def align_turn(turn: Any, audio=None, sample_rate: int = SAMPLE_RATE,
     elif level == "phone":
         if not word:
             raise PhoneticsError("level='phone' requires word=...")
+        # forced_align makes the target sequence explain *all* the audio, so
+        # passing a whole turn here forces one word's phones across minutes of
+        # other speech and returns a confident, meaningless alignment. This
+        # level expects the word's own clip -- see measure_word_in_turn, which
+        # word-aligns first and passes the slice. Check before touching the
+        # model: loading it to reject on duration costs more than the check.
+        secs = len(np.asarray(audio)) / float(sample_rate)
+        if secs > MAX_PHONE_CLIP_SECONDS:
+            raise PhoneticsError(
+                f"level='phone' got {secs:.1f}s of audio for {word!r}. It "
+                "aligns one word's clip, not a whole turn: use "
+                "measure_word_in_turn(), or slice the word out with a "
+                "level='word' pass first."
+            )
         phones = pronounce(word, variant=variant)
         if not phones:
             raise PhoneticsError(f"{word!r} is not in CMUdict")
@@ -660,12 +700,21 @@ def find_word_tokens(sporc, word: str, limit: int = 50,
                      podcast_id: Optional[str] = None,
                      max_formant: float = 5500.0,
                      pad: float = 0.3,
+                     max_turn_duration: Optional[float] = 30.0,
                      skip_errors: bool = True) -> List[FormantMeasurement]:
     """
     Search the corpus for a word and measure its vowel in every hit.
 
     Runs the whole chain: find turns containing ``word``, fetch each turn's
-    audio, align, and measure. Network-bound -- roughly 1-2 s per token.
+    audio, align, and measure.
+
+    **Cost is dominated by alignment, not network.** Locating the word means
+    word-aligning the turn's whole text against its whole audio, and the CTC
+    forward pass runs at roughly 0.45x realtime on CPU -- so a turn costs about
+    half its own duration to process, however short the target word is. Turns
+    are long: in the corpus the median turn matching a common word runs ~64 s,
+    the mean ~160 s, and the longest seen is 3,240 s (a 54-minute monologue,
+    ~24 minutes to align). ``max_turn_duration`` is what keeps that bounded.
 
     Args:
         sporc: A :class:`~sporc.dataset.SPORCDataset`.
@@ -674,6 +723,11 @@ def find_word_tokens(sporc, word: str, limit: int = 50,
         podcast_id: Restrict to one podcast.
         max_formant: Praat formant ceiling (see :func:`measure_formants`).
         pad: Context padding per turn.
+        max_turn_duration: Skip turns longer than this many seconds. None
+            disables the cap, which on this corpus means single turns can cost
+            tens of minutes each. The cap biases the sample toward
+            conversational shows: a solo monologue is often one enormous turn,
+            so capping drops those speakers rather than sampling them.
         skip_errors: Skip turns whose audio is unreachable (link rot is common)
             rather than raising.
 
@@ -681,14 +735,26 @@ def find_word_tokens(sporc, word: str, limit: int = 50,
         A list of :class:`FormantMeasurement`, at most ``limit`` long.
     """
     backend = sporc._parquet_backend
+    # Only a minority of hits survive the duration cap (~24% at 30 s), so ask
+    # for enough candidates to still reach `limit` measurements.
+    over = 4 if max_turn_duration is None else 12
     hits = sporc.search_turns(word, mode="exact", podcast_id=podcast_id,
-                              limit=limit * 4)
+                              limit=limit * over)
+    skipped_long = 0
     out: List[FormantMeasurement] = []
     for h in hits:
         if len(out) >= limit:
             break
         if not re.search(rf"\b{re.escape(word)}\b", h.get("turn_text", ""), re.I):
             continue                       # 'exact' is a substring match: 'cot' in 'cottage'
+        # Check duration before fetching: aligning the turn is what costs, and
+        # it scales with the turn, so a 54-minute monologue is ~24 minutes of
+        # CPU to find one word in.
+        if max_turn_duration is not None:
+            dur = float(h.get("end_time", 0)) - float(h.get("start_time", 0))
+            if dur > max_turn_duration:
+                skipped_long += 1
+                continue
         # search_turns() does not return mp3_url; it lives on the episode.
         ep = backend.get_episode_by_id(h.get("episode_id"))
         if not ep:
@@ -704,6 +770,14 @@ def find_word_tokens(sporc, word: str, limit: int = 50,
             continue
         if m is not None:
             out.append(m)
+    if skipped_long:
+        # Say what was dropped: silently returning the short-turn subset would
+        # look like the corpus simply has few tokens of this word.
+        logger.info(
+            "%s: skipped %d turn(s) longer than %.0fs (raise "
+            "max_turn_duration to include them, at ~0.45x realtime each)",
+            word, skipped_long, max_turn_duration,
+        )
     return out
 
 
@@ -716,6 +790,19 @@ def lobanov_normalize(measurements: Union[Sequence[FormantMeasurement], Any],
     compares anatomy rather than phonology. Lobanov centres and scales each
     speaker's own vowel space, which is what makes tokens comparable across
     people.
+
+    A speaker is an inferred **name**, matched across episodes and across
+    podcasts: one person on three shows is one speaker with three times the
+    tokens, which is usually what makes ``min_tokens`` reachable at all. The
+    known cost is that two distinct people sharing a name are pooled; SPoRC has
+    no canonical speaker id today, and this should key on one when it does.
+
+    Tokens whose speaker names no one are dropped rather than pooled:
+    ``NO_INFERRED_SPEAKER`` (the corpus's "attribution found nobody" marker,
+    and its single most common speaker value -- it would otherwise sail past
+    ``min_tokens`` and dominate the result with a z-score computed across
+    dozens of unrelated vocal tracts), and raw ``SPEAKER_00`` diarization
+    labels, which are per-episode and so identify no one across episodes.
 
     Args:
         measurements: A sequence of :class:`FormantMeasurement`, or a DataFrame
@@ -737,12 +824,39 @@ def lobanov_normalize(measurements: Union[Sequence[FormantMeasurement], Any],
         return df
 
     df = df[df["speaker"].notna()]
+
+    # Drop values that name no one. NO_INFERRED_SPEAKER is the corpus's "name
+    # attribution found nobody" marker and is the most common value, so it both
+    # survives min_tokens easily and pools unrelated people -- it would dominate
+    # a plot with a z-score computed across dozens of different vocal tracts.
+    names = df["speaker"].astype(str)
+    anon = names.isin(PLACEHOLDER_SPEAKERS) | names.str.match(_ANON_SPEAKER_RE)
+    if anon.any():
+        logger.info(
+            "dropping %d token(s) from unidentified speakers (%s): they name no "
+            "one, so they cannot be normalized per speaker",
+            int(anon.sum()), ", ".join(sorted(names[anon].unique())[:3]),
+        )
+        df = df[~anon]
+        if df.empty:
+            logger.warning("No identified speakers left to normalize.")
+            return df
+
+    # An inferred name is the speaker identity: the same name in two episodes,
+    # or on two different shows, is taken to be the same person. That is what
+    # makes min_tokens reachable -- a guest on three podcasts is one speaker
+    # with three times the tokens, not three speakers with too few each. It
+    # does mean two distinct people sharing a name are pooled; a future SPoRC
+    # is expected to carry canonical speaker ids, and this should key on those
+    # when it does.
     counts = df.groupby("speaker")["f1"].transform("size")
     df = df[counts >= min_tokens]
     if df.empty:
         logger.warning(
             "No speaker has >= %d measured tokens, so nothing can be "
-            "normalized. Collect more tokens per speaker.", min_tokens,
+            "normalized. Tokens accumulate per *name*, so probe more words "
+            "rather than more podcasts: one token each from %d different "
+            "speakers normalizes nothing.", min_tokens, len(df),
         )
         return df
     for f in ("f1", "f2"):
