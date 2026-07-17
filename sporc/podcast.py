@@ -5,6 +5,7 @@ Podcast class for representing podcast collections.
 from typing import List, Optional, Dict, Any, Set
 from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
 import statistics
 
 from .episode import Episode
@@ -37,12 +38,32 @@ class Podcast:
     last_update: Optional[int] = None
     oldest_episode_date: Optional[str] = None
 
+    # Set from the catalog when the backend builds the podcast. Absent on
+    # hand-built objects, where podcast_id derives it from rss_url instead.
+    _podcast_id: Optional[str] = field(default=None, repr=False)
+
     def __post_init__(self):
         """Validate podcast data after initialization."""
         if not self.title.strip():
             raise ValueError("Podcast title cannot be empty")
         if not self.rss_url.strip():
             raise ValueError("RSS URL cannot be empty")
+
+    @property
+    def podcast_id(self) -> str:
+        """
+        The corpus's id for this podcast: ``md5(rss_url)[:12]``.
+
+        Prefer this over ``title`` as a key: the feed url is what the corpus
+        identifies a podcast by, and distinct shows can share a title.
+
+        Comes from the catalog when the backend built this object, and is
+        derived from ``rss_url`` otherwise. The two agree: the derivation
+        reproduces the catalog's id for all 228,099 podcasts.
+        """
+        if self._podcast_id:
+            return self._podcast_id
+        return hashlib.md5(self.rss_url.encode("utf-8")).hexdigest()[:12]
 
     @property
     def num_episodes(self) -> int:

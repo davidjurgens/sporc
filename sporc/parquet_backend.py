@@ -739,6 +739,7 @@ class ParquetBackend:
             explicit=bool(pinfo.get("explicit", 0)),
             image_url=pinfo.get("image_url"),
             itunes_author=pinfo.get("itunes_author"),
+            _podcast_id=str(pinfo.get("podcast_id") or "") or None,
         )
 
         ep_rows = self._read_podcast_episodes_partition(podcast_id)
@@ -890,6 +891,8 @@ class ParquetBackend:
             oldest_episode_date=str(erow.get("oldest_episode_date", "")) or None,
             last_update=str(erow.get("last_update", "")) or None,
             created_on=str(erow.get("created_on", "")) or None,
+            _episode_id=eid or None,
+            _podcast_id=pid or None,
             _turn_data_check=lambda p=pid, e=eid: self.episode_has_turn_data(p, e),
         )
 

@@ -87,7 +87,11 @@ for e in eps:
         if len(text.split()) < 120:      # too short to carry a topic
             continue
         docs.append(text)
-        meta.append({"episode": e.title, "podcast": e.podcast_title,
+        # episode_id, not title: titles repeat (one podcast here has seven
+        # episodes called "Daily Encouragement"), so grouping by title would
+        # merge distinct episodes. Keep the title alongside for reading.
+        meta.append({"episode_id": e.episode_id, "episode": e.title,
+                     "podcast_id": e.podcast_id, "podcast": e.podcast_title,
                      "category": e.primary_category,
                      "date": e.episode_date,
                      "start": win.time_range[0]})

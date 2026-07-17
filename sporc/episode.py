@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any, Callable, Iterator, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from bisect import bisect_left, bisect_right
+import hashlib
 import json
 from enum import Enum
 
@@ -195,6 +196,11 @@ class Episode:
     last_update: Optional[int] = None
     created_on: Optional[int] = None
 
+    # Set from the catalog when the backend builds the episode. Absent on
+    # hand-built objects, where the id properties derive them from the urls.
+    _episode_id: Optional[str] = field(default=None, repr=False)
+    _podcast_id: Optional[str] = field(default=None, repr=False)
+
     # Internal data
     _turns: List[Turn] = field(default_factory=list, repr=False)
     _turns_loaded: bool = False
@@ -210,6 +216,37 @@ class Episode:
             raise ValueError("Duration cannot be negative")
         if not self.mp3_url.strip():
             raise ValueError("MP3 URL cannot be empty")
+
+    @property
+    def episode_id(self) -> str:
+        """
+        The corpus's id for this episode: ``md5(mp3_url)[:16]``.
+
+        Prefer this over ``title`` as a key. Titles are not unique -- one
+        podcast in the corpus has seven episodes all called "Daily
+        Encouragement" -- so grouping or joining on title silently merges
+        distinct episodes.
+
+        Comes from the catalog when the backend built this object, and is
+        derived from ``mp3_url`` otherwise. The two agree: the derivation
+        reproduces the catalog's id for all 1,124,058 episodes.
+        """
+        if self._episode_id:
+            return self._episode_id
+        return hashlib.md5(self.mp3_url.encode("utf-8")).hexdigest()[:16]
+
+    @property
+    def podcast_id(self) -> str:
+        """
+        The id of the podcast this episode belongs to: ``md5(rss_url)[:12]``.
+
+        The same value as :attr:`Podcast.podcast_id`, so episodes can be grouped
+        by show without going back to the catalog. Prefer it over
+        ``podcast_title``, which is not guaranteed unique.
+        """
+        if self._podcast_id:
+            return self._podcast_id
+        return hashlib.md5(self.rss_url.encode("utf-8")).hexdigest()[:12]
 
     @property
     def categories(self) -> List[str]:

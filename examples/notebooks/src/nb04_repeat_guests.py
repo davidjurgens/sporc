@@ -87,7 +87,11 @@ for g, apps in repeat.items():
             continue
         text = " ".join(t.text for t in turns)
         rows.append({
-            "guest": g, "podcast": e.podcast_title, "episode": e.title,
+            # podcast_id/episode_id are the safe keys; the titles are for
+            # reading. Counting distinct shows per guest below is the headline
+            # number, so it groups on the id rather than the title.
+            "guest": g, "podcast_id": e.podcast_id, "episode_id": e.episode_id,
+            "podcast": e.podcast_title, "episode": e.title,
             "date": e.episode_date, "n_turns": len(turns),
             "n_words": len(text.split()),
             "speaking_time": sum(t.duration for t in turns),
@@ -97,14 +101,16 @@ for g, apps in repeat.items():
 app = pd.DataFrame(rows)
 # Enough words to characterise someone's language at all.
 app = app[app.n_words >= 300]
-counts = app.groupby("guest")["podcast"].nunique()
+# Count distinct shows by id: two different podcasts can carry the same title,
+# and this "appeared on >= 2 shows" filter is the notebook's whole premise.
+counts = app.groupby("guest")["podcast_id"].nunique()
 app = app[app.guest.isin(counts[counts >= 2].index)]
 
 print(f"usable appearances : {len(app)}")
 print(f"guests             : {app.guest.nunique()}")
 if len(app):
     print()
-    print(app.groupby("guest").agg(shows=("podcast","nunique"),
+    print(app.groupby("guest").agg(shows=("podcast_id","nunique"),
                                    words=("n_words","sum")).sort_values(
                                        "shows", ascending=False).head(10).to_string())
 '''),
@@ -191,7 +197,7 @@ def ngrams(text, n=7):
 if len(app):
     found = []
     for g, sub in app.groupby("guest"):
-        if sub.podcast.nunique() < 2:
+        if sub.podcast_id.nunique() < 2:
             continue
         per_show = {}
         for pod, s2 in sub.groupby("podcast"):
