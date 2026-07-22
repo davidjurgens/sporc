@@ -618,6 +618,12 @@ class ParquetBackend:
                 # Drop duplicate key columns before join, convert to pandas for merge
                 text_df = text_table.to_pandas()
                 audio_df = audio_table.to_pandas()
+                # One acoustic row per turn. 81,807 turns are stored twice or
+                # more -- duplicated verbatim in version 1.0 and carried
+                # forward -- in the acoustics tree as well as the text one, and
+                # merging both sides multiplies them: an episode with four
+                # copies of a turn came back with sixteen.
+                audio_df = audio_df.drop_duplicates(subset=["turn_count"])
                 text_df = text_df.merge(
                     audio_df.drop(columns=["episode_id", "podcast_id"],
                                   errors="ignore"),

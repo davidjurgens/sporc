@@ -357,3 +357,51 @@ class TestTokenCountComesFromTheRenamedColumn:
         episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
 
         assert [t.token_count for t in episode.turns] == [3, 3]
+
+
+@pytest.mark.integration
+class TestDuplicateTurnsDoNotFanOut:
+    """
+    81,807 turns are stored more than once, duplicated verbatim in dataset 1.0
+    and carried forward. They appear in the acoustics tree too, so joining the
+    two multiplied them: four copies of a turn against four acoustic rows came
+    back as sixteen.
+    """
+
+    @staticmethod
+    def _duplicate_a_turn(layout, tree, subdir):
+        """Store the first turn of the fixture episode twice, as 1.0 does."""
+        path = os.path.join(layout, subdir, "part-000-000.parquet")
+        table = pq.ParquetFile(path).read()
+        doubled = pa.concat_tables([table, table.slice(0, 1)])
+        # The fixture is one podcast per part, so one row group is still right.
+        pq.write_table(doubled, path, row_group_size=doubled.num_rows)
+
+        smap = os.path.join(layout, "metadata", "shard_map.parquet")
+        sm = pq.ParquetFile(smap).read().to_pandas()
+        sm.loc[sm.tree == tree, "num_rows"] = doubled.num_rows
+        pq.write_table(pa.Table.from_pandas(sm, preserve_index=False), smap)
+
+    def test_a_duplicated_turn_is_not_multiplied_by_the_audio_join(
+        self, tmp_parquet_layout
+    ):
+        self._duplicate_a_turn(tmp_parquet_layout, "turns_text", "turns/text")
+        self._duplicate_a_turn(tmp_parquet_layout, "acoustics", "acoustics")
+
+        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=True)
+        rows = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS,
+                                             include_audio=True)
+
+        # Three rows in the data (two turns, one stored twice) must stay three,
+        # not become four via the 2x2 join on the duplicated turn_count.
+        assert len(rows) == 3, [r["turn_count"] for r in rows]
+
+    def test_the_audio_still_lands_on_the_turns(self, tmp_parquet_layout):
+        self._duplicate_a_turn(tmp_parquet_layout, "turns_text", "turns/text")
+        self._duplicate_a_turn(tmp_parquet_layout, "acoustics", "acoustics")
+
+        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=True)
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        assert any(t.get_audio_features() for t in episode.turns), (
+            "de-duplicating the acoustics must not drop the join")
