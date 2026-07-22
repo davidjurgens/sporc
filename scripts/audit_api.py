@@ -104,15 +104,26 @@ def audit(data_dir, do_search, load_audio):
     pod = pods[0]
     check("search_podcast(by title)", lambda: ds.search_podcast(pod.title),
           expect=lambda v: _assert(v is not None, "not found"))
+    # Bounded deliberately. Each match builds an Episode, which reads that
+    # podcast's partition, so a bare min_duration search on the full corpus
+    # builds a million of them -- the audit is checking that the call works,
+    # not that it can materialize the corpus.
     check("search_episodes(min_duration)",
-          lambda: ds.search_episodes(min_duration=60))
+          lambda: ds.search_episodes(min_duration=60, max_episodes=25))
     check("search_episodes(category)",
-          lambda: ds.search_episodes(category=pod.primary_category))
+          lambda: ds.search_episodes(category=pod.primary_category,
+                                     max_episodes=25))
     check("search_episodes_by_subcategory",
           lambda: ds.search_episodes_by_subcategory("Technology",
                                                     max_episodes=3))
-    check("search_podcasts_by_subcategory",
-          lambda: ds.search_podcasts_by_subcategory("Technology"))
+    # Unbounded by design in the API, so only exercise it where the answer is
+    # small. On the full corpus this builds every Technology podcast.
+    if n_pods <= 5000:
+        check("search_podcasts_by_subcategory",
+              lambda: ds.search_podcasts_by_subcategory("Technology"))
+    else:
+        print("SKIP  search_podcasts_by_subcategory "
+              "(builds every podcast in the subcategory)")
     check("prefetch(local)", lambda: ds.prefetch([pod.podcast_id]))
 
     # ---- podcast level -------------------------------------------------

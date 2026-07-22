@@ -528,6 +528,10 @@ class SPORCDataset:
             List of podcasts with episodes in the specified subcategory
         """
         pids = self._parquet_backend.get_podcasts_by_category(subcategory)
+        self._warn_if_whole_corpus(
+            len(pids), f"search_podcasts_by_subcategory({subcategory!r})",
+            "the backend's get_podcasts_by_category(), which returns ids, "
+            "and build only the ones you need")
         podcasts = []
         for pid in pids:
             try:
