@@ -405,3 +405,26 @@ class TestDuplicateTurnsDoNotFanOut:
 
         assert any(t.get_audio_features() for t in episode.turns), (
             "de-duplicating the acoustics must not drop the join")
+
+
+class TestMockBackendMirrorsInit:
+    """
+    mock_parquet_backend hand-lists the state __init__ sets, so every new
+    attribute silently drifts out of it and surfaces later as an AttributeError
+    in a test that has nothing to do with the change. Three had already drifted.
+    """
+
+    def test_fixture_sets_everything_init_does(self, mock_parquet_backend):
+        import re
+        import inspect
+        from sporc.parquet_backend import ParquetBackend
+
+        source = inspect.getsource(ParquetBackend.__init__)
+        expected = set(re.findall(r"self\.(_?[a-z][a-z0-9_]*)\s*(?::[^=]+)?=",
+                                  source))
+
+        missing = sorted(a for a in expected
+                         if not hasattr(mock_parquet_backend, a))
+        assert not missing, (
+            f"mock_parquet_backend is missing {missing}; add them to the "
+            f"fixture in conftest.py so it still stands in for a real backend")

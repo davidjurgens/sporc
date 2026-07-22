@@ -1045,7 +1045,11 @@ class ParquetBackend:
                     stored_token_count=row.get(
                         "token_count", row.get("word_count")),
                     speakers_recomputed=row.get("speakers_recomputed"),
-                    mp3_url=str(row.get("mp3_url", "")) or None,
+                    # From the episode, not the row: 1.1 dropped mp3_url
+                    # from the turn files, where it repeated identically
+                    # on every row of an episode. Reading it from the row
+                    # leaves every Turn.mp3_url None.
+                    mp3_url=episode.mp3_url,
                 )
                 turns.append(turn)
             except (ValueError, TypeError) as e:
@@ -1863,6 +1867,10 @@ class ParquetBackend:
         if not turns:
             return None
 
+        # The turn rows no longer carry it; the episode row does.
+        erow = self.get_episode_by_id(episode_id) or {}
+        episode_mp3_url = str(erow.get("mp3_url", "")) or ""
+
         word_lower = word.lower()
         found_count = 0
 
@@ -1897,7 +1905,7 @@ class ParquetBackend:
                     confidence = min(1.0, 10.0 / max(turn_duration, 1.0))
 
                     return {
-                        "mp3_url": turn.get("mp3_url", ""),
+                        "mp3_url": turn.get("mp3_url") or episode_mp3_url,
                         "estimated_start": round(est_start, 2),
                         "estimated_end": round(est_end, 2),
                         "turn_start": turn_start,

@@ -5,6 +5,8 @@ Shared fixtures for SPORC test suite.
 import json
 import os
 
+from collections import OrderedDict
+
 import pytest
 import pandas as pd
 import pyarrow as pa
@@ -367,4 +369,12 @@ def mock_parquet_backend(sample_speaker_index_df, sample_episode_metrics_df):
     backend._turn_episode_ids = {}
     backend._shard_map = None
     backend._has_text_db = False
+    backend._episode_partition_cache = OrderedDict()
+    backend._tree_cache = OrderedDict()
+    backend.load_audio_features = False
+    # Catalog lookups. Empty rather than absent: methods that consult them
+    # should return nothing, not raise AttributeError, and a fixture that
+    # raises hides which of the two a caller actually does.
+    backend._eid_to_idx = {}
+    backend._pid_to_idx = {}
     return backend
