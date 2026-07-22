@@ -51,7 +51,7 @@ print(podcast.title, podcast.num_episodes, "episodes")
 for episode in podcast.episodes:
     print(f"{episode.title} — {episode.duration_minutes:.0f} min")
 
-    # Only ~33% of episodes were diarized; check before using turns.
+    # Only ~65% of episodes were diarized; check before using turns.
     if episode.has_turn_data:
         for turn in episode.turns[:3]:
             print(f"  [{turn.inferred_speaker_role}] {turn.text[:60]}...")
@@ -131,8 +131,10 @@ clean.
 
 ### Turn coverage
 
-Only **372,604 of 1,124,058 episodes (33%)** were diarized into speaker turns.
+Only **731,101 of 1,124,058 episodes (65%)** were diarized into speaker turns.
 The rest have a transcript but are marked `SPEAKER_DATA_UNAVAILABLE` upstream.
+Dataset version 1.1 roughly doubled this: 1.0 had 372,604 (33%), and 358,497
+episodes that had been diarized but never merged were added.
 An empty `episode.turns` is therefore usually a gap in the corpus rather than a
 fact about the episode:
 
@@ -183,7 +185,7 @@ done
 ```
 
 Subsets are diarized-only by default, so every episode has turns; pass
-`--include-undiarized` to mirror the real corpus's ~33% coverage. Learners point
+`--include-undiarized` to mirror the real corpus's ~65% coverage. Learners point
 at the directory and nothing downloads:
 
 ```python

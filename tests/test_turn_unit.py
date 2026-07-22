@@ -91,12 +91,55 @@ def test_turn_validation_errors():
     # Negative duration
     with pytest.raises(ValueError):
         Turn(speaker=["SPEAKER_00"], text="x", start_time=0, end_time=1, duration=-1, turn_count=1)
-    # Empty speaker list
+    # A missing speaker list is still a broken record
     with pytest.raises(ValueError):
-        Turn(speaker=[], text="x", start_time=0, end_time=1, duration=1, turn_count=1)
+        Turn(speaker=None, text="x", start_time=0, end_time=1, duration=1, turn_count=1)
     # Empty text
     with pytest.raises(ValueError):
         Turn(speaker=["SPEAKER_00"], text="   ", start_time=0, end_time=1, duration=1, turn_count=1)
+
+
+def test_turn_with_no_speakers_is_allowed():
+    """
+    Where diarization found no segments, the whole transcript arrives as one
+    turn attributed to nobody. Twelve episodes in the corpus are like this, and
+    rejecting them would make their text unreachable rather than unattributed.
+    """
+    t = Turn(speaker=[], text="hello there", start_time=0, end_time=1,
+             duration=1, turn_count=0)
+    assert t.speaker == []
+    assert t.word_count == 2
+
+def test_word_count_falls_back_when_the_dataset_count_is_nan():
+    """
+    Some episodes carry a null word_count, and the acoustics join goes through
+    pandas, which turns a missing integer into float('nan'). NaN is not None, so
+    the stored value was returned as-is and summing word counts over an episode
+    produced NaN.
+    """
+    t = Turn(speaker=["SPEAKER_00"], text="one two three", start_time=0,
+             end_time=1, duration=1, turn_count=0,
+             stored_word_count=float("nan"))
+    assert t.word_count == 3
+    assert t.words_per_second == 3.0
+
+
+def test_word_count_prefers_the_stored_value():
+    # The stored count reflects how the corpus was tokenised, which is not the
+    # same as splitting on whitespace.
+    t = Turn(speaker=["SPEAKER_00"], text="one two three", start_time=0,
+             end_time=1, duration=1, turn_count=0, stored_word_count=7)
+    assert t.word_count == 7
+
+
+def test_word_count_from_pandas_float_is_an_int():
+    # pandas hands back numpy floats even when nothing is missing; callers
+    # index and format with this, so it has to come back as an int.
+    t = Turn(speaker=["SPEAKER_00"], text="one two", start_time=0, end_time=1,
+             duration=1, turn_count=0, stored_word_count=5.0)
+    assert t.word_count == 5
+    assert isinstance(t.word_count, int)
+
 
 def test_turn_zero_duration():
     t = Turn(speaker=["SPEAKER_00"], text="oneword", start_time=0, end_time=0, duration=0, turn_count=1)

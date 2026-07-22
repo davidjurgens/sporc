@@ -120,8 +120,11 @@ plt.show()
     ("md", """\
 ## 1.4 Turn coverage
 
-SPoRC diarized **372,604 of 1,124,058 episodes (33%)**. The rest have a
+SPoRC diarized **731,101 of 1,124,058 episodes (65%)**. The rest have a
 transcript but no speaker turns — upstream marked them `SPEAKER_DATA_UNAVAILABLE`.
+Dataset version 1.1 roughly doubled this by merging in 358,497 episodes that had
+been diarized but never joined to the corpus; their speakers are anonymous
+labels with no inferred names or roles.
 
 So `len(episode.turns) == 0` is ambiguous: it means *either* "nobody spoke"
 (never true) *or* "the corpus has no turn data here" (usually true).
@@ -135,7 +138,7 @@ if episode.has_turn_data:
 
 The tutorial subset is **diarized-only** by default, so coverage here is 100% —
 that is a property of the subset, not of SPoRC. Point the same code at the full
-corpus and two thirds of episodes drop out.
+corpus and a third of episodes drop out.
 """),
     ("code", '''\
 eps = list(sporc.iterate_episodes())
@@ -145,7 +148,7 @@ print(f"episodes in subset      : {len(eps):,}")
 print(f"with turn data          : {with_turns:,} ({with_turns/len(eps):.0%})")
 print(f"without                 : {len(eps)-with_turns:,}")
 print()
-print("In the FULL corpus: 372,604 / 1,124,058 = 33%.")
+print("In the FULL corpus: 731,101 / 1,124,058 = 65%.")
 print("This subset is diarized-only, so it is not representative on this axis.")
 '''),
     ("md", """\
@@ -226,7 +229,7 @@ print(mins.describe().round(1).to_string())
 
 1. **Two months, May–June 2020.** No long-run trends. But a dateable event sits
    in the middle of the window.
-2. **33% of episodes have turns** in the full corpus. Gate on
+2. **65% of episodes have turns** in the full corpus. Gate on
    `episode.has_turn_data`, never on `len(turns) > 0`.
 3. **~90% of turns have no role.** Role-conditioned numbers are lower bounds.
 

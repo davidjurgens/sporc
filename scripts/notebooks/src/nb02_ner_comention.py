@@ -62,7 +62,7 @@ Two sources, and they are not equivalent:
 
 * `episode.transcript` — the whole episode as one string. Available for **every**
   episode.
-* `episode.turns` — the diarized turns. Available for **~33%** of episodes
+* `episode.turns` — the diarized turns. Available for **~65%** of episodes
   (notebook 01), but carries speaker and timing.
 
 For co-mention we want locality: two names in the same *turn* are plausibly
@@ -275,7 +275,7 @@ if G.number_of_edges() and core.number_of_nodes() > 3:
 * **Same turn ≠ related.** A long turn can hold two unrelated names. Tightening
   to a sentence window trades recall for precision; there is no free choice here,
   so state the one you made.
-* **Coverage.** Only diarized episodes have turns (~33% in the full corpus), so
+* **Coverage.** Only diarized episodes have turns (~65% in the full corpus), so
   this graph describes a third of the corpus.
 * **Two months.** May–June 2020. The entity mix is dominated by that moment and
   generalises to nothing else.

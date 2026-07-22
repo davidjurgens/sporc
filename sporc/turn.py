@@ -2,6 +2,7 @@
 Turn class for representing conversation turns in podcast episodes.
 """
 
+import math
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -23,17 +24,34 @@ class Turn:
     duration: float
     turn_count: int
 
-    # Audio features
+    # Audio features. Means were published in 1.0; the standard deviations are
+    # new in 1.1 and describe how much each measure varied across the turn.
     mfcc1_sma3_mean: Optional[float] = None
     mfcc2_sma3_mean: Optional[float] = None
     mfcc3_sma3_mean: Optional[float] = None
     mfcc4_sma3_mean: Optional[float] = None
     f0_semitone_from_27_5hz_sma3nz_mean: Optional[float] = None
     f1_frequency_sma3nz_mean: Optional[float] = None
+    mfcc1_sma3_stdev: Optional[float] = None
+    mfcc2_sma3_stdev: Optional[float] = None
+    mfcc3_sma3_stdev: Optional[float] = None
+    mfcc4_sma3_stdev: Optional[float] = None
+    f0_semitone_from_27_5hz_sma3nz_stdev: Optional[float] = None
+    f1_frequency_sma3nz_stdev: Optional[float] = None
 
-    # Speaker inference
+    # Speaker inference. Empty for episodes diarized but never run through the
+    # name and role classifier, which is most of what 1.1 added.
     inferred_speaker_role: Optional[str] = None
     inferred_speaker_name: Optional[str] = None
+
+    # Words in the turn as counted when the dataset was built. Read through the
+    # word_count property, which falls back to splitting the text when the
+    # dataset did not supply one.
+    stored_word_count: Optional[int] = None
+
+    # False for turns carried over from 1.0 unchanged, because the inputs
+    # needed to redo the word-to-speaker matching no longer exist.
+    speakers_recomputed: Optional[bool] = None
 
     # Episode reference
     mp3_url: Optional[str] = None
@@ -46,8 +64,12 @@ class Turn:
             raise ValueError("End time must be after start time")
         if self.duration < 0:
             raise ValueError("Duration cannot be negative")
-        if not self.speaker:
-            raise ValueError("Speaker list cannot be empty")
+        # An empty speaker list is a real state, not a broken record: where
+        # diarization produced no segments for an episode, the transcript comes
+        # through as a single turn attributed to nobody. Rejecting it would make
+        # those episodes unreadable rather than merely unattributed.
+        if self.speaker is None:
+            raise ValueError("Speaker list cannot be None")
         if not self.text.strip():
             raise ValueError("Text cannot be empty")
 
@@ -73,7 +95,20 @@ class Turn:
 
     @property
     def word_count(self) -> int:
-        """Get the number of words in the turn text."""
+        """
+        Number of words in the turn.
+
+        Prefers the count the dataset carries, which 1.1 added, and falls back
+        to splitting the text so turns built by hand or from an older layout
+        still answer.
+        """
+        # NaN rather than None: joining the acoustics on goes through pandas,
+        # which represents a missing integer as float('nan'), and that is not
+        # None. Testing for None alone let NaN through and word counts summed
+        # to NaN for whole episodes.
+        wc = self.stored_word_count
+        if wc is not None and not (isinstance(wc, float) and math.isnan(wc)):
+            return int(wc)
         return len(self.text.split())
 
     @property
@@ -114,20 +149,16 @@ class Turn:
         Returns:
             Dictionary of audio feature names to values
         """
-        features = {}
-        if self.mfcc1_sma3_mean is not None:
-            features['mfcc1_sma3_mean'] = self.mfcc1_sma3_mean
-        if self.mfcc2_sma3_mean is not None:
-            features['mfcc2_sma3_mean'] = self.mfcc2_sma3_mean
-        if self.mfcc3_sma3_mean is not None:
-            features['mfcc3_sma3_mean'] = self.mfcc3_sma3_mean
-        if self.mfcc4_sma3_mean is not None:
-            features['mfcc4_sma3_mean'] = self.mfcc4_sma3_mean
-        if self.f0_semitone_from_27_5hz_sma3nz_mean is not None:
-            features['f0_semitone_from_27_5hz_sma3nz_mean'] = self.f0_semitone_from_27_5hz_sma3nz_mean
-        if self.f1_frequency_sma3nz_mean is not None:
-            features['f1_frequency_sma3nz_mean'] = self.f1_frequency_sma3nz_mean
-        return features
+        names = [
+            'mfcc1_sma3_mean', 'mfcc2_sma3_mean', 'mfcc3_sma3_mean',
+            'mfcc4_sma3_mean', 'f0_semitone_from_27_5hz_sma3nz_mean',
+            'f1_frequency_sma3nz_mean',
+            'mfcc1_sma3_stdev', 'mfcc2_sma3_stdev', 'mfcc3_sma3_stdev',
+            'mfcc4_sma3_stdev', 'f0_semitone_from_27_5hz_sma3nz_stdev',
+            'f1_frequency_sma3nz_stdev',
+        ]
+        return {n: getattr(self, n) for n in names
+                if getattr(self, n) is not None}
 
     def to_dict(self) -> Dict[str, Any]:
         """

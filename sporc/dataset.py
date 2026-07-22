@@ -2,6 +2,7 @@
 Main dataset class for working with the SPORC dataset.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -28,11 +29,12 @@ logger = logging.getLogger(__name__)
 _PODCAST_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 _EPISODE_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
-# Concurrent downloads used by prefetch(). Prefetching is latency-bound -- four
-# small files per podcast -- so fetching one podcast at a time leaves the link
-# idle and makes prefetching a few hundred podcasts take tens of minutes.
-# Bounded well below what the Hub would rate-limit.
-_PREFETCH_WORKERS = 16
+# Concurrent downloads used by prefetch(). The Hub allows a few thousand
+# requests per five-minute window across everything a token is doing, and each
+# download costs about two of them. Since 1.1 a prefetch resolves to a few large
+# part files rather than thousands of small ones, so there is nothing to gain
+# from a wide pool: bandwidth, not latency, is the limit now.
+_PREFETCH_WORKERS = 4
 
 
 def _normalize_subset(subset: Any) -> Dict[str, List[str]]:
@@ -116,20 +118,28 @@ class SPORCDataset:
     # read by this package, which is Parquet-only.
     _LEGACY_PATTERNS = ["*.jsonl.gz"]
 
-    # Full-text search index (~26 GB). Only needed by search_turns(),
+    # Full-text search index (~14 GB). Only needed by search_turns(),
     # search_episodes_by_text() and concordance(), so it is opt-in.
     _SEARCH_DB_PATTERN = "metadata/turns_search.duckdb"
 
+    # The turn text the search index deliberately omits (~19 GB). Ranked search
+    # works without it, returning turn identifiers; substring and regex search
+    # need it, and fall back to scanning local Parquet when it is absent.
+    _TEXT_DB_PATTERN = "metadata/turns_text.duckdb"
+
     # Catalogs needed before anything can be looked up. Listed explicitly rather
-    # than globbed: snapshot_download(allow_patterns=...) still enumerates all
-    # ~685k files in the repo to match them, which takes hours, whereas fetching
-    # known names directly costs one request each.
+    # than globbed: snapshot_download(allow_patterns=...) enumerates every file
+    # in the repo to match them, whereas fetching known names directly costs one
+    # request each.
     _CORE_METADATA = [
         "manifest.json",
         "metadata/podcast_catalog.parquet",
         "metadata/episode_catalog.parquet",
         "metadata/category_index.parquet",
         "metadata/hostname_index.parquet",
+        # Required from dataset 1.1: without it no podcast can be located
+        # inside the part files.
+        "metadata/shard_map.parquet",
     ]
 
     # Built by scripts/build_indexes.py. Absent from older revisions of the
@@ -141,7 +151,8 @@ class SPORCDataset:
 
     @classmethod
     def _download_metadata(cls, token: Optional[str], cache_dir: Optional[str],
-                           include_search_db: bool) -> str:
+                           include_search_db: bool,
+                           include_turn_text: bool = False) -> str:
         """
         Fetch the metadata catalogs and return the snapshot directory holding
         them.
@@ -159,6 +170,8 @@ class SPORCDataset:
         wanted = list(cls._CORE_METADATA) + list(cls._OPTIONAL_METADATA)
         if include_search_db:
             wanted.append(cls._SEARCH_DB_PATTERN)
+        if include_turn_text:
+            wanted.append(cls._TEXT_DB_PATTERN)
 
         root = None
         for rel in wanted:
@@ -194,6 +207,7 @@ class SPORCDataset:
                  subset: Optional[Any] = None,
                  allow_downloads: bool = True,
                  include_search_db: bool = False,
+                 include_turn_text: bool = False,
                  ignore_patterns: Optional[List[str]] = None):
         """
         Initialize the SPORC dataset.
@@ -210,7 +224,7 @@ class SPORCDataset:
             use_auth_token: Hugging Face token. If None, uses cached credentials.
             cache_dir: HuggingFace cache location. If None, uses the default.
             lazy: Fetch per-podcast partitions on demand (default). Set False to
-                  download the whole corpus up front (~31 GB, ~685k files).
+                  download the whole corpus up front (~43 GB across ~540 files).
             subset: Data to fetch up front, so that later access needs no
                     network. Accepts a list of podcast ids or titles, a dict
                     with ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``
@@ -220,9 +234,14 @@ class SPORCDataset:
                              already local; requests for absent data raise
                              ``DataNotLocalError``. Combine with ``subset`` to
                              pin a run to an exact slice of the corpus.
-            include_search_db: Download the ~26 GB full-text search database,
+            include_search_db: Download the ~14 GB full-text search database,
                                needed by search_turns(),
                                search_episodes_by_text() and concordance().
+            include_turn_text: Also download the ~19 GB turn-text database.
+                               Ranked search works without it but returns turn
+                               identifiers rather than the matching text;
+                               substring and regex search need it and otherwise
+                               scan whatever Parquet is local.
             ignore_patterns: Override download exclusions for the non-lazy path.
                              Passed through to ``snapshot_download``.
 
@@ -237,6 +256,7 @@ class SPORCDataset:
                 parquet_dir = self._download_metadata(
                     token=use_auth_token, cache_dir=cache_dir,
                     include_search_db=include_search_db,
+                    include_turn_text=include_turn_text,
                 )
                 from .source import HubDataSource
                 source = HubDataSource(
@@ -253,6 +273,8 @@ class SPORCDataset:
                     ignore_patterns = list(self._LEGACY_PATTERNS)
                     if not include_search_db:
                         ignore_patterns.append(self._SEARCH_DB_PATTERN)
+                    if not include_turn_text:
+                        ignore_patterns.append(self._TEXT_DB_PATTERN)
                 logger.info(
                     "Downloading the full SPORC corpus from HuggingFace "
                     "(this is large and may take a while; excluding: %s)",
@@ -362,23 +384,42 @@ class SPORCDataset:
 
         logger.info("Prefetching data for %d podcast(s)...", len(pids))
 
-        # Each podcast is four small files and the cost is entirely network
-        # latency, so fetching them one podcast at a time leaves the link idle.
-        # Threads are the right tool here: hf_hub_download releases the GIL on
-        # I/O, and the source's own bookkeeping is only touched under it.
-        files = 0
-        if len(pids) > 1 and _PREFETCH_WORKERS > 1:
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
-                for got in pool.map(
-                        lambda p: sum(backend.ensure_podcast_data(p).values()),
-                        pids):
-                    files += got
-        else:
-            for pid in pids:
-                files += sum(backend.ensure_podcast_data(pid).values())
+        # Resolve the podcasts to the distinct part files that hold them, and
+        # fetch each file once. Podcasts share parts -- about a thousand to a
+        # file, and neighbours in the category ordering land together -- so a
+        # few hundred podcasts from one category usually come down as a handful
+        # of files. Fetching per podcast instead would request the same part
+        # hundreds of times, which is what made prefetching a subset hit the
+        # Hub's rate limit and fail with HTTP 429.
+        smap = backend.shard_map
+        rels = []
+        for tree in ("episodes", "turns_text", "acoustics", "turns_metrics"):
+            for part in smap.parts_for(tree, pids):
+                rels.append(smap.relpath(tree, part))
+        rels = list(dict.fromkeys(rels))
 
-        logger.info("Prefetch complete: %d podcast(s), %d file(s)", len(pids), files)
+        logger.info("%d podcast(s) resolve to %d part file(s)",
+                    len(pids), len(rels))
+
+        # Modest concurrency: these are ~100 MB files, so a handful in flight
+        # saturates the link, and the Hub counts every request against a
+        # five-minute window shared with the rest of the session.
+        files = 0
+        source = getattr(backend, "_source", None)
+        with (source.downloads_enabled() if source is not None
+              else contextlib.nullcontext()):
+            if len(rels) > 1 and _PREFETCH_WORKERS > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
+                    for got in pool.map(
+                            lambda r: source.path(r) is not None, rels):
+                        files += bool(got)
+            else:
+                for rel in rels:
+                    files += bool(source.path(rel) is not None)
+
+        logger.info("Prefetch complete: %d podcast(s), %d file(s)",
+                    len(pids), files)
         return {"podcasts": len(pids), "files": files, "unresolved": unresolved}
 
     # ------------------------------------------------------------------

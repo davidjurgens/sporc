@@ -100,10 +100,33 @@ def tmp_parquet_layout(tmp_path):
         "podcast_id": [PID_WITH_TURNS],
     }), meta / "speaker_name_index.parquet")
 
+    # From dataset 1.1 the trees are packed: many podcasts per part file, one
+    # row group each, located through metadata/shard_map.parquet. The fixture
+    # writes two podcasts into a single part so that the row-group addressing is
+    # actually exercised rather than degenerating to one podcast per file.
+    shard_rows = []
+
+    def _write_part(tree, directory, filename, per_podcast):
+        """Write one part with a row group per podcast, recording the map."""
+        d = root / directory
+        d.mkdir(parents=True, exist_ok=True)
+        writer = None
+        try:
+            for rg, (pid, table) in enumerate(per_podcast):
+                if writer is None:
+                    writer = pq.ParquetWriter(d / filename, table.schema)
+                writer.write_table(table)
+                shard_rows.append({
+                    "podcast_id": pid, "tree": tree, "part": filename,
+                    "row_group": rg, "num_rows": table.num_rows,
+                })
+        finally:
+            if writer is not None:
+                writer.close()
+
+    episode_tables = []
     for pid, eids in ((PID_WITH_TURNS, [EID_WITH_TURNS, "cc00dd11ee22ff33"]),
                       (PID_NO_TURNS, [EID_NO_TURNS])):
-        d = root / "episodes" / f"podcast_id={pid}"
-        d.mkdir(parents=True)
         rows = {}
         for eid in eids:
             cols = _episode_columns(eid, pid, f"Episode {eid[:4]}")
@@ -129,28 +152,74 @@ def tmp_parquet_layout(tmp_path):
             })
             for k, v in cols.items():
                 rows.setdefault(k, []).extend(v)
-        pq.write_table(pa.table(rows), d / "data.parquet")
+        episode_tables.append((pid, pa.table(rows)))
 
-    # Only PID_WITH_TURNS gets a turns partition, and only for one of its two
-    # episodes -- exactly the shape of the real corpus.
-    td = root / "turns" / f"podcast_id={PID_WITH_TURNS}"
-    td.mkdir(parents=True)
-    pq.write_table(pa.table({
+    _write_part("episodes", "episodes", "part-000-000.parquet", episode_tables)
+
+    # Only PID_WITH_TURNS has turns, and only for one of its two episodes --
+    # exactly the shape of the real corpus, where a podcast present in the
+    # catalog may be absent from the turns tree entirely.
+    turns = pa.table({
         "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS],
         "podcast_id": [PID_WITH_TURNS, PID_WITH_TURNS],
-        "mp3_url": ["http://example.com/a.mp3"] * 2,
         "speaker": [["SPEAKER_00"], ["SPEAKER_01"]],
         "turn_text": ["hello world", "goodbye now"],
         "start_time": [0.0, 2.5],
         "end_time": [2.0, 4.0],
         "duration": [2.0, 1.5],
         "turn_count": [0, 1],
-        "inferred_speaker_role": ["host", "guest"],
+        "word_count": [2, 2],
         "inferred_speaker_name": ["Ira Glass", "A Guest"],
-    }), td / "text.parquet")
+        "inferred_speaker_role": ["host", "guest"],
+        "speakers_recomputed": [True, True],
+    })
+    _write_part("turns_text", "turns/text", "part-000-000.parquet",
+                [(PID_WITH_TURNS, turns)])
+
+    acoustics = pa.table({
+        "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS],
+        "podcast_id": [PID_WITH_TURNS, PID_WITH_TURNS],
+        "turn_count": [0, 1],
+        "mfcc1_sma3_mean": [1.0, 2.0],
+        "mfcc1_sma3_stdev": [0.1, 0.2],
+        "f0_semitone_from_27_5hz_sma3nz_mean": [30.0, 31.0],
+        "f0_semitone_from_27_5hz_sma3nz_stdev": [1.0, 1.1],
+    })
+    _write_part("acoustics", "acoustics", "part-000-000.parquet",
+                [(PID_WITH_TURNS, acoustics)])
+
+    metrics = pa.table({
+        "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS],
+        "turn_count": pa.array([0, 1], pa.int32()),
+        "word_count": pa.array([2, 2], pa.int32()),
+        "words_per_second": pa.array([1.0, 1.33], pa.float32()),
+        "gap_from_prev": pa.array([None, 0.5], pa.float32()),
+        "overlap_with_prev": pa.array([None, 0.0], pa.float32()),
+        "discourse_marker_count": pa.array([0, 0], pa.int16()),
+        "char_count": pa.array([11, 11], pa.int32()),
+    })
+    _write_part("turns_metrics", "turns/metrics", "part-000-000.parquet",
+                [(PID_WITH_TURNS, metrics)])
+
+    # One row group per tree, which is how the published map is written and how
+    # the client finds its rows without scanning the others.
+    smap = pa.table({
+        "podcast_id": [r["podcast_id"] for r in shard_rows],
+        "tree": [r["tree"] for r in shard_rows],
+        "part": [r["part"] for r in shard_rows],
+        "row_group": [r["row_group"] for r in shard_rows],
+        "num_rows": [r["num_rows"] for r in shard_rows],
+    })
+    writer = pq.ParquetWriter(meta / "shard_map.parquet", smap.schema)
+    try:
+        import pyarrow.compute as pc
+        for tree in sorted(set(smap.column("tree").to_pylist())):
+            writer.write_table(smap.filter(pc.equal(smap.column("tree"), tree)))
+    finally:
+        writer.close()
 
     (root / "manifest.json").write_text(json.dumps({
-        "version": "1.0",
+        "version": "1.1",
         "record_counts": {"podcasts": 2, "episodes": 3},
     }))
     return str(root)
@@ -293,4 +362,6 @@ def mock_parquet_backend(sample_speaker_index_df, sample_episode_metrics_df):
     backend._missing_turns_warned = set()
     backend._turn_partition_exists = {}
     backend._turn_episode_ids = {}
+    backend._shard_map = None
+    backend._has_text_db = False
     return backend

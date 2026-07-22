@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="sporc",
-    version="1.0.0",
+    version="1.1.0",
     author="David Jurgens",
     author_email="jurgens@umich.edu",
     description="A Python package for working with the SPORC (Structured Podcast Open Research Corpus) dataset",
@@ -30,7 +30,10 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "huggingface_hub>=0.16.0",
+        # 1.2 added backoff that honours the Hub's Retry-After on HTTP 429.
+        # Older versions surface the rate limit as a hard failure, which is how
+        # a large prefetch used to die partway through.
+        "huggingface_hub>=1.2.0",
         "pandas>=1.3.0",
         "numpy>=1.21.0",
         "requests>=2.25.0",

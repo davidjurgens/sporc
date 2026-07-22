@@ -94,8 +94,30 @@ class TestEnsureSearchDb:
              patch("sporc.parquet_backend.os.path.exists", return_value=True):
             mock_parquet_backend._ensure_search_db()
             mock_duckdb.connect.assert_called_once()
-            mock_con.execute.assert_called_once_with("LOAD fts")
+            # The turn text is a second, optional database; when it is on disk
+            # it gets attached so search can return the text it matched.
+            executed = [c[0][0] for c in mock_con.execute.call_args_list]
+            assert executed[0] == "LOAD fts"
+            assert any("ATTACH" in s and "turns_text.duckdb" in s
+                       for s in executed)
+            assert mock_parquet_backend._has_text_db is True
             assert mock_parquet_backend._search_db_con is mock_con
+
+    def test_absent_text_db_is_not_attached(self, mock_parquet_backend):
+        """The index alone is a valid install; ranked search still works."""
+        mock_con = MagicMock()
+        mock_duckdb = MagicMock()
+        mock_duckdb.connect.return_value = mock_con
+
+        def exists(path):
+            return "turns_text.duckdb" not in str(path)
+
+        with patch.dict("sys.modules", {"duckdb": mock_duckdb}), \
+             patch("sporc.parquet_backend.os.path.exists", side_effect=exists):
+            mock_parquet_backend._ensure_search_db()
+            executed = [c[0][0] for c in mock_con.execute.call_args_list]
+            assert executed == ["LOAD fts"]
+            assert mock_parquet_backend._has_text_db is False
 
 
 # ===================================================================
@@ -107,6 +129,10 @@ class TestSearchTurns:
     """Tests for search_turns method."""
 
     def _setup_backend(self, mock_parquet_backend, mock_duckdb_result):
+        # These exercise the SQL paths, which need the text database attached:
+        # without it, substring and regex search deliberately fall back to
+        # scanning Parquet instead.
+        mock_parquet_backend._has_text_db = True
         columns = [
             "episode_id", "podcast_id", "turn_count", "turn_text",
             "start_time", "end_time", "duration", "speaker_role",
@@ -538,43 +564,32 @@ class TestFilterEpisodesByMetrics:
 class TestGetTurnMetrics:
     """Tests for get_turn_metrics method."""
 
-    def test_file_missing_raises_index_not_built(self, mock_parquet_backend):
-        with patch("sporc.source.os.path.exists", return_value=False):
-            with pytest.raises(IndexNotBuiltError):
-                mock_parquet_backend.get_turn_metrics("pod1", "ep1")
+    # Against a real layout rather than a patched pq.read_table: these used to
+    # mock the read away, which meant they passed regardless of how metrics were
+    # located on disk and caught nothing when the layout changed under them.
 
-    def test_valid_file_returns_sorted(self, mock_parquet_backend):
-        import pyarrow as pa
+    def test_podcast_without_metrics_raises_index_not_built(
+        self, tmp_parquet_layout
+    ):
+        from conftest import PID_NO_TURNS
 
-        table = pa.table(
-            {
-                "episode_id": ["ep1", "ep1", "ep1"],
-                "turn_count": [2, 0, 1],
-                "word_count": [10, 5, 8],
-            }
-        )
-        with patch("sporc.source.os.path.exists", return_value=True), \
-             patch("sporc.parquet_backend.pq.read_table", return_value=table):
-            results = mock_parquet_backend.get_turn_metrics("pod1", "ep1")
-            assert len(results) == 3
-            assert results[0]["turn_count"] == 0
-            assert results[1]["turn_count"] == 1
-            assert results[2]["turn_count"] == 2
+        backend = ParquetBackend(tmp_parquet_layout)
+        with pytest.raises(IndexNotBuiltError):
+            backend.get_turn_metrics(PID_NO_TURNS, "ep1")
 
-    def test_nonexistent_episode_returns_empty(self, mock_parquet_backend):
-        import pyarrow as pa
+    def test_valid_file_returns_sorted(self, tmp_parquet_layout):
+        from conftest import EID_WITH_TURNS, PID_WITH_TURNS
 
-        table = pa.table(
-            {
-                "episode_id": ["ep1", "ep1"],
-                "turn_count": [0, 1],
-                "word_count": [10, 5],
-            }
-        )
-        with patch("sporc.source.os.path.exists", return_value=True), \
-             patch("sporc.parquet_backend.pq.read_table", return_value=table):
-            results = mock_parquet_backend.get_turn_metrics("pod1", "ep999")
-            assert results == []
+        backend = ParquetBackend(tmp_parquet_layout)
+        results = backend.get_turn_metrics(PID_WITH_TURNS, EID_WITH_TURNS)
+        assert [r["turn_count"] for r in results] == [0, 1]
+        assert results[0]["word_count"] == 2
+
+    def test_nonexistent_episode_returns_empty(self, tmp_parquet_layout):
+        from conftest import PID_WITH_TURNS
+
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.get_turn_metrics(PID_WITH_TURNS, "ep999") == []
 
 
 # ===================================================================

@@ -14,12 +14,20 @@ thing on disk.
 
 import logging
 import os
+import time
 from contextlib import contextmanager
 from typing import Optional
 
 from .exceptions import DataNotLocalError
 
 logger = logging.getLogger(__name__)
+
+# Retry policy for the Hub's rate limit. Windows are five minutes long, so a
+# handful of attempts with a capped wait covers one closed window without
+# hanging indefinitely on a problem that will not resolve itself.
+_MAX_RETRIES = 5
+_RETRY_BASE_SECONDS = 10.0
+_RETRY_MAX_SECONDS = 300.0
 
 
 class DataSource:
@@ -131,22 +139,62 @@ class HubDataSource(DataSource):
         from huggingface_hub.errors import EntryNotFoundError
 
         try:
-            p = hf_hub_download(
-                repo_id=self.repo_id,
-                repo_type="dataset",
-                filename=relpath,
-                token=self.token,
-                cache_dir=self.cache_dir,
-            )
+            p = self._download_with_retry(hf_hub_download, relpath)
         except EntryNotFoundError:
-            # The dataset genuinely has no such file (e.g. a podcast with no
-            # turns), as opposed to a transient failure.
+            # The dataset genuinely has no such file, as opposed to a transient
+            # failure.
             self._absent.add(relpath)
             return None
 
         self._fetched += 1
         logger.debug("Fetched %s", relpath)
         return p
+
+    def _download_with_retry(self, hf_hub_download, relpath: str) -> str:
+        """
+        Fetch one file, waiting out the Hub's rate limit rather than failing.
+
+        The Hub counts requests in fixed five-minute windows and answers 429
+        once a window is spent. That is a wait, not an error: the window always
+        reopens. Treating it as a failure is what turned a large prefetch into a
+        partial download with an exception on the end.
+
+        The backoff is capped rather than unbounded so a genuinely broken
+        setup -- a revoked token, a repo that no longer exists -- still fails in
+        a bounded time instead of retrying all afternoon.
+        """
+        from huggingface_hub.errors import HfHubHTTPError
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                return hf_hub_download(
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    filename=relpath,
+                    token=self.token,
+                    cache_dir=self.cache_dir,
+                )
+            except HfHubHTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code",
+                                 None)
+                if status != 429 or attempt == _MAX_RETRIES - 1:
+                    raise
+                # Prefer the server's own figure; it knows when the window ends.
+                retry_after = getattr(
+                    getattr(exc, "response", None), "headers", {}
+                ).get("Retry-After")
+                try:
+                    delay = float(retry_after)
+                except (TypeError, ValueError):
+                    delay = _RETRY_BASE_SECONDS * (2 ** attempt)
+                delay = min(delay, _RETRY_MAX_SECONDS)
+                logger.warning(
+                    "Rate limited by the Hub while fetching %s; waiting %.0fs "
+                    "(attempt %d of %d). Reduce concurrency if this repeats.",
+                    relpath, delay, attempt + 1, _MAX_RETRIES,
+                )
+                time.sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def __repr__(self) -> str:
         return (f"HubDataSource({self.repo_id!r}, fetched={self._fetched}, "

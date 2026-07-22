@@ -97,13 +97,17 @@ class TestEpisodePartitionCache:
         monkeypatch.setattr(pb_module, "_EPISODE_PARTITION_CACHE_SIZE", 1)
         backend = ParquetBackend(tmp_parquet_layout)
 
-        backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
-        # Evict PID_WITH_TURNS (this reads a partition of its own).
-        backend._read_podcast_episodes_partition(PID_NO_TURNS)
-        ep = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+        backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)   # read 1
+        # Evict PID_WITH_TURNS (this reads for itself).
+        backend._read_podcast_episodes_partition(PID_NO_TURNS)          # read 2
+        ep = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)  # read 3
 
-        reads = [p for p in count_partition_reads if PID_WITH_TURNS in p]
-        assert len(reads) == 2, "an evicted podcast must be re-read, not lost"
+        # Reads cannot be attributed by path any more: podcasts share a part
+        # file and are told apart by row group, so the id is not in the name.
+        # Three opens is the point -- the third is the evicted podcast being
+        # re-read rather than silently returning nothing.
+        assert len(count_partition_reads) == 3, (
+            "an evicted podcast must be re-read, not lost")
         assert ep is not None
 
 
@@ -217,3 +221,45 @@ class TestResolvePresent:
             resolve_present(tmp_parquet_layout, ["gone_a", "gone_b"])
 
         assert caplog.records, "absent partitions must be reported, not skipped"
+
+
+@pytest.mark.integration
+class TestSubsetRoundTrip:
+    """
+    A subset has to be a dataset, not a pile of files.
+
+    make_subset writes the packed layout itself -- parts, row groups, and its
+    own shard map -- so the same client code reads a subset and the full corpus.
+    Building one and then opening it is the only check that actually proves it.
+    """
+
+    @staticmethod
+    def _build():
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+        from make_subset import build
+
+        return build
+
+    def test_subset_opens_and_serves_turns(self, tmp_parquet_layout, tmp_path):
+        out = str(tmp_path / "subset")
+        self._build()(tmp_parquet_layout, out, [PID_WITH_TURNS],
+                      diarized_only=False)
+
+        ds = SPORCDataset(parquet_dir=out)
+        pod = ds.search_podcast("Turns Podcast")
+        assert pod.podcast_id == PID_WITH_TURNS
+
+        episode = next(e for e in pod.episodes if e.episode_id == EID_WITH_TURNS)
+        turns = episode.turns
+        assert len(turns) == 2
+        assert turns[0].text == "hello world"
+
+    def test_subset_excludes_unselected_podcasts(self, tmp_parquet_layout,
+                                                 tmp_path):
+        out = str(tmp_path / "subset2")
+        self._build()(tmp_parquet_layout, out, [PID_WITH_TURNS],
+                      diarized_only=False)
+
+        ds = SPORCDataset(parquet_dir=out)
+        # The catalog must not advertise a podcast whose rows were not copied.
+        assert PID_NO_TURNS not in ds._parquet_backend.get_all_podcast_ids()

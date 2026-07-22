@@ -240,7 +240,7 @@ if len(app) and "rep" in dir() and len(rep):
 ## 4.5 Caveats
 
 * **This is a lower bound on repeat guests.** Only diarized episodes have turns
-  (~33%), and the guest must have been both diarized *and* correctly named. A
+  (~65%), and the guest must have been both diarized *and* correctly named. A
   guest who appeared on five shows may show up here on two.
 * **Names are not resolved.** "Dr. Jane Smith" and "Jane Smith" are different
   people to this code. Cross-show matching therefore misses appearances, and

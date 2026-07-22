@@ -51,11 +51,34 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = os.environ.get("SPORC_PARQUET_DIR", "sporc_parquet")
 
-# Copied per selected podcast. Missing ones are skipped, not an error.
-PARTITION_FILES = {
-    "episodes": ["data.parquet"],
-    "turns": ["text.parquet", "audio_features.parquet", "metrics.parquet"],
-}
+# Subset parts are written to the same size target as the published dataset, so
+# a subset looks like a small dataset rather than a different format.
+TARGET_PART_BYTES = 128 << 20
+
+
+def _write_subset_shard_map(rows, path):
+    """
+    Write the subset's shard map, one row group per tree.
+
+    Matches how the published map is laid out, so the client finds a tree's
+    rows from the Parquet statistics rather than scanning the others.
+    """
+    if not rows:
+        return
+    table = pa.table({
+        "podcast_id": [r["podcast_id"] for r in rows],
+        "tree": [r["tree"] for r in rows],
+        "part": [r["part"] for r in rows],
+        "row_group": [r["row_group"] for r in rows],
+        "num_rows": [r["num_rows"] for r in rows],
+    })
+    writer = pq.ParquetWriter(path, table.schema, compression="zstd")
+    try:
+        for tree in sorted(set(table.column("tree").to_pylist())):
+            writer.write_table(
+                table.filter(pc.equal(table.column("tree"), tree)))
+    finally:
+        writer.close()
 
 
 def _filter_table(path, column, keep, out_path):
@@ -110,9 +133,24 @@ def resolve_present(data_dir, podcast_ids):
     disagreement this script exists to prevent, so the ids are checked against
     the partitions on disk first.
     """
+    from sporc.shard_map import ShardMap
+
+    smap_path = os.path.join(data_dir, "metadata", "shard_map.parquet")
+    if not os.path.exists(smap_path):
+        raise SystemExit(
+            f"{smap_path} not found. Dataset version 1.1 and later locate "
+            "podcasts through the shard map; a 1.0 layout needs sporc<1.1."
+        )
+    smap = ShardMap(smap_path)
+
     present, missing = [], []
     for pid in podcast_ids:
-        if os.path.isdir(f"{data_dir}/episodes/podcast_id={pid}"):
+        loc = smap.locate("episodes", pid)
+        # Present means both that the corpus has the podcast and that the part
+        # holding it was actually fetched -- a lazily built layout has the
+        # shard map for everything but the parts for only what was touched.
+        if loc is not None and os.path.exists(
+                os.path.join(data_dir, smap.relpath("episodes", loc.part))):
             present.append(pid)
         else:
             missing.append(pid)
@@ -167,47 +205,89 @@ def build(data_dir, out, podcast_ids, diarized_only):
     # but a missing *episodes* partition means the catalog would advertise a
     # podcast whose data is absent. resolve_present() has already dropped those,
     # so reaching one here is a bug rather than a data condition.
+    # The subset is written in the same shape as the full dataset: parts holding
+    # many podcasts, one row group each, addressed through a shard map. Only the
+    # selected podcasts' row groups are copied, and the map is rewritten to
+    # match, so the subset is a smaller dataset rather than a differently
+    # shaped one and the same client code reads both.
+    from sporc.shard_map import ShardMap, TREE_DIRS
+
+    smap = ShardMap(os.path.join(data_dir, "metadata", "shard_map.parquet"))
+    eid_filter = pa.array(sorted(kept_eids)) if diarized_only else None
+
     n_files = 0
-    for pid in podcast_ids:
-        for tree, files in PARTITION_FILES.items():
-            src_dir = f"{data_dir}/{tree}/podcast_id={pid}"
-            if not os.path.isdir(src_dir):
+    shard_rows = []
+    for tree, subdir in TREE_DIRS.items():
+        # Group the wanted podcasts by the part they live in, so each source
+        # file is opened once instead of once per podcast.
+        by_part = {}
+        for pid in podcast_ids:
+            loc = smap.locate(tree, pid)
+            if loc is None:
                 if tree == "episodes":
                     raise RuntimeError(
-                        f"episode partition for podcast_id={pid} vanished from "
-                        f"{data_dir} after selection; refusing to write a subset "
-                        "whose catalog does not match its data."
+                        f"podcast_id={pid} is absent from the {tree} shard map "
+                        "after selection; refusing to write a subset whose "
+                        "catalog does not match its data."
                     )
                 continue
-            dst_dir = f"{out}/{tree}/podcast_id={pid}"
-            os.makedirs(dst_dir, exist_ok=True)
-            for f in files:
-                src = os.path.join(src_dir, f)
+            by_part.setdefault(loc.part, []).append((pid, loc.row_group))
+
+        if not by_part:
+            continue
+        dst_dir = os.path.join(out, subdir)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        seq = 0
+        writer = None
+        rg = 0
+        dst_name = None
+        try:
+            for part in sorted(by_part):
+                src = os.path.join(data_dir, subdir, part)
                 if not os.path.exists(src):
+                    if tree == "episodes":
+                        raise RuntimeError(
+                            f"{src} is missing but the shard map names it; "
+                            "prefetch the podcasts before building a subset."
+                        )
                     continue
-                dst = os.path.join(dst_dir, f)
-                if diarized_only:
-                    t = pq.ParquetFile(src).read()
-                    if "episode_id" in t.column_names:
-                        t = t.filter(pc.is_in(t.column("episode_id"),
-                                              value_set=pa.array(sorted(kept_eids))))
-                        if t.num_rows == 0:
+                pf = pq.ParquetFile(src)
+                for pid, row_group in sorted(by_part[part], key=lambda x: x[1]):
+                    table = pf.read_row_group(row_group)
+                    if eid_filter is not None and "episode_id" in table.column_names:
+                        table = table.filter(pc.is_in(table.column("episode_id"),
+                                                      value_set=eid_filter))
+                        if table.num_rows == 0:
                             continue
-                        pq.write_table(t, dst, compression="zstd")
+                    if writer is None:
+                        dst_name = f"part-{seq:04d}.parquet"
+                        writer = pq.ParquetWriter(
+                            os.path.join(dst_dir, dst_name), table.schema,
+                            compression="zstd")
+                        rg = 0
                         n_files += 1
-                        continue
-                shutil.copy(src, dst)
-                n_files += 1
-        # A podcast can end up with no rows at all; drop empty dirs.
-        for tree in PARTITION_FILES:
-            d = f"{out}/{tree}/podcast_id={pid}"
-            if os.path.isdir(d) and not os.listdir(d):
-                os.rmdir(d)
+                    writer.write_table(table)
+                    shard_rows.append({
+                        "podcast_id": pid, "tree": tree, "part": dst_name,
+                        "row_group": rg, "num_rows": table.num_rows,
+                    })
+                    rg += 1
+                    if os.path.getsize(os.path.join(dst_dir, dst_name)) >= TARGET_PART_BYTES:
+                        writer.close()
+                        writer = None
+                        seq += 1
+        finally:
+            if writer is not None:
+                writer.close()
+
+    _write_subset_shard_map(shard_rows, f"{meta_out}/shard_map.parquet")
+    counts["shard_map"] = len(shard_rows)
     counts["partition_files"] = n_files
 
     manifest = {
-        "version": "1.0",
-        "schema_version": 1,
+        "version": "1.1",
+        "schema_version": 2,
         "subset": True,
         "creation_date": datetime.now().isoformat(),
         "source": "blitt/SPoRC (HuggingFace), subset via scripts/make_subset.py",

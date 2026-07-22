@@ -283,7 +283,7 @@ suite here.
   eyeball and too systematic to ignore.
 * `guest_speaker_labels` is itself inferred. It confirms *someone* was diarized
   and named — not that the name is right.
-* Only ~33% of episodes are diarized (notebook 01), so a real guest on an
+* Only ~65% of episodes are diarized (notebook 01), so a real guest on an
   undiarized episode is invisible. The corrected network is a **lower bound**.
 * Name strings are unnormalized: "Dr. Jane Smith" and "Jane Smith" are two
   people here. Serious work needs entity resolution.

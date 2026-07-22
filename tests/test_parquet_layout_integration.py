@@ -153,10 +153,21 @@ class TestLazySource:
     def test_prefetch_reports_what_exists(self, tmp_parquet_layout):
         b = ParquetBackend(tmp_parquet_layout)
         got = b.ensure_podcast_data(PID_WITH_TURNS)
-        assert got[f"episodes/podcast_id={PID_WITH_TURNS}/data.parquet"] is True
-        assert got[f"turns/podcast_id={PID_WITH_TURNS}/text.parquet"] is True
-        # Not built for this fixture, and that is not an error.
-        assert got[f"turns/podcast_id={PID_WITH_TURNS}/metrics.parquet"] is False
+        # Paths are part files now, not per-podcast directories, and only the
+        # trees that actually hold this podcast are listed.
+        assert got == {
+            "episodes/part-000-000.parquet": True,
+            "turns/text/part-000-000.parquet": True,
+            "acoustics/part-000-000.parquet": True,
+            "turns/metrics/part-000-000.parquet": True,
+        }
+
+    def test_prefetch_skips_trees_without_the_podcast(self, tmp_parquet_layout):
+        b = ParquetBackend(tmp_parquet_layout)
+        got = b.ensure_podcast_data(PID_NO_TURNS)
+        # This podcast has episodes but no turns, so only the episode part is
+        # named. Listing a turns part for it would fetch ~100 MB for nothing.
+        assert got == {"episodes/part-000-000.parquet": True}
 
 
 class TestSearchEpisodesFetching:

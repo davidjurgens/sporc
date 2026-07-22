@@ -247,7 +247,7 @@ This measures gravity, not position.
   their own.
 * **Two months is the whole world here.** There is no "normal baseline" outside
   the window to compare against — only earlier-May versus later-June.
-* **Coverage.** Diarized episodes only (~33% of the corpus), so this is a third
+* **Coverage.** Diarized episodes only (~65% of the corpus), so this is a third
   of podcasting, non-randomly selected.
 * **Multiple comparisons.** Four targets × several tests. Treat p-values as
   descriptive.

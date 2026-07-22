@@ -237,6 +237,6 @@ for cat in mat.index:
   inferential.
 * **Ads.** Podcast transcripts are full of read advertising, which forms tight,
   high-coherence topics that are about the ad market rather than the show.
-* **Two months, 33% coverage.** As everywhere in SPoRC.
+* **Two months, 65% coverage.** As everywhere in SPoRC.
 """),
 ]

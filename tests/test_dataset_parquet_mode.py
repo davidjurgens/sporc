@@ -96,14 +96,19 @@ class TestInit:
     @patch("sporc.parquet_backend.ParquetBackend")
     @patch("huggingface_hub.snapshot_download", return_value="/fake/cache/dir")
     def test_eager_excludes_legacy_and_search_db(self, mock_download, mock_backend):
-        """lazy=False downloads everything except legacy exports and the search DB."""
+        """
+        lazy=False downloads everything except the legacy exports and the two
+        search databases, which together are more than half the repository and
+        are only needed by full-text search.
+        """
         SPORCDataset(lazy=False)
         mock_download.assert_called_once_with(
             repo_id="blitt/SPoRC",
             repo_type="dataset",
             token=None,
             cache_dir=None,
-            ignore_patterns=["*.jsonl.gz", "metadata/turns_search.duckdb"],
+            ignore_patterns=["*.jsonl.gz", "metadata/turns_search.duckdb",
+                             "metadata/turns_text.duckdb"],
         )
         # No lazy source: everything is already on disk.
         assert mock_backend.call_args.kwargs["source"] is None

@@ -604,6 +604,31 @@ def build_duckdb_search(data_dir: str) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _require_hive_layout(data_dir: str) -> None:
+    """
+    Refuse to run against the packed layout dataset 1.1 introduced.
+
+    Every phase here walks turns/podcast_id=<id>/ directories. Dataset 1.1 packs
+    podcasts into shared part files instead, so that walk finds nothing, and
+    without this check each phase would cheerfully write an empty index over a
+    good one. Failing loudly beats silently emptying the catalogs.
+    """
+    turns_dir = os.path.join(data_dir, "turns")
+    if not os.path.isdir(turns_dir):
+        return
+    entries = os.listdir(turns_dir)
+    if any(d.startswith("podcast_id=") for d in entries):
+        return
+    if os.path.isdir(os.path.join(turns_dir, "text")):
+        logger.error(
+            "%s is the packed layout (dataset 1.1), which this script cannot "
+            "read: it expects one directory per podcast under turns/. The 1.1 "
+            "index builders live alongside the repack tooling "
+            "(build_metadata.py, stage_metrics.py, stage_search.py, "
+            "stage_search_text.py).", data_dir)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build precomputed indexes for SPORC Parquet dataset"
@@ -626,6 +651,7 @@ def main():
     if not os.path.isdir(data_dir):
         logger.error("Data directory not found: %s", data_dir)
         sys.exit(1)
+    _require_hive_layout(data_dir)
 
     overall_start = time.time()
 

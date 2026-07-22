@@ -81,6 +81,9 @@ class ParquetBackend:
         self._speaker_index_df = None
         self._episode_metrics_df = None
         self._search_db_con = None
+        # Whether the optional turn-text database is attached alongside the
+        # search index. Set when the search database is opened.
+        self._has_text_db = False
 
         # Whether the on-disk caches have been checked against the Parquet
         # files. The feather DataFrames are written alongside the index cache,
@@ -92,6 +95,11 @@ class ParquetBackend:
         self._missing_turns_warned: set = set()
         self._turn_partition_exists: Dict[str, bool] = {}
         self._turn_episode_ids: Dict[str, frozenset] = {}
+
+        # Locates each podcast's row group within the packed part files. Loaded
+        # on first use, and per tree, so a session that never touches acoustics
+        # never pays for that tree's entries.
+        self._shard_map = None
 
         cache_idx = os.path.join(self._meta_dir, "_index_cache.pkl")
         if self._load_cache(cache_idx):
@@ -380,41 +388,73 @@ class ParquetBackend:
             raise NotFoundError(f"Podcast id '{podcast_id}' not found")
         return self._podcast_row_to_dict(idx)
 
-    def _turns_text_path(self, podcast_id: str) -> Optional[str]:
+    @property
+    def shard_map(self):
+        """The podcast -> (part, row group) index, loaded on first use."""
+        if self._shard_map is None:
+            from .shard_map import ShardMap
+
+            path = self._source.path("metadata/shard_map.parquet")
+            if path is None:
+                raise DatasetAccessError(
+                    "metadata/shard_map.parquet is missing. It is required from "
+                    "dataset version 1.1 onward, which packs podcasts into "
+                    "shared part files. If you are pointing at a version 1.0 "
+                    "copy of the data, install sporc<1.1 or fetch the current "
+                    "dataset."
+                )
+            self._shard_map = ShardMap(path)
+        return self._shard_map
+
+    def _read_tree(self, tree: str, podcast_id: str,
+                   columns: Optional[List[str]] = None):
         """
-        Local path to the turn-text partition for *podcast_id*, fetching it if
-        the source allows. None if the dataset has no turns for that podcast.
+        Read one podcast's rows from *tree*, or None if it has none there.
+
+        Each podcast occupies exactly one row group, so this reads that group
+        rather than the whole part file. The part itself is fetched in full on
+        first touch and stays in the local cache, which means the next podcast
+        in the same file costs nothing -- and neighbouring podcasts share a file
+        because the parts are ordered by category.
         """
-        return self._source.path(f"turns/podcast_id={podcast_id}/text.parquet")
+        loc = self.shard_map.locate(tree, podcast_id)
+        if loc is None:
+            return None
+        path = self._source.path(self.shard_map.relpath(tree, loc.part))
+        if path is None:
+            return None
+        return pq.ParquetFile(path).read_row_group(loc.row_group,
+                                                   columns=columns)
 
     def has_turn_data(self, podcast_id: str) -> bool:
         """
-        Whether the corpus contains a turns partition for *podcast_id*.
+        Whether the corpus contains turns for *podcast_id*.
 
         Roughly a third of podcasts have none, so their episodes yield no turns.
-        Note that a partition existing does not mean every episode in it was
+        Note that a podcast having turns does not mean every episode in it was
         diarized; use :meth:`episode_has_turn_data` for a per-episode answer.
+
+        This is answered from the shard map, in memory. Before 1.1 it probed for
+        a file, which against the Hub meant an HTTP request per podcast.
         """
         known = self._turn_partition_exists.get(podcast_id)
         if known is None:
-            known = self._turns_text_path(podcast_id) is not None
+            known = self.shard_map.has("turns_text", podcast_id)
             self._turn_partition_exists[podcast_id] = known
         return known
 
     def _episode_ids_with_turns(self, podcast_id: str) -> frozenset:
         """
-        Episode ids that actually have turns in *podcast_id*'s partition.
+        Episode ids that actually have turns for *podcast_id*.
 
         Reads only the ``episode_id`` column and memoizes per podcast.
         """
         known = self._turn_episode_ids.get(podcast_id)
         if known is None:
-            path = self._turns_text_path(podcast_id)
-            if path is None:
-                known = frozenset()
-            else:
-                col = pq.ParquetFile(path).read(columns=["episode_id"])
-                known = frozenset(col.column("episode_id").to_pylist())
+            table = self._read_tree("turns_text", podcast_id,
+                                    columns=["episode_id"])
+            known = (frozenset() if table is None
+                     else frozenset(table.column("episode_id").to_pylist()))
             self._turn_episode_ids[podcast_id] = known
         return known
 
@@ -432,12 +472,11 @@ class ParquetBackend:
             map to False when the dataset simply has no such file (for example
             a podcast with no turns), which is not an error.
         """
-        rels = [
-            f"episodes/podcast_id={podcast_id}/data.parquet",
-            f"turns/podcast_id={podcast_id}/text.parquet",
-            f"turns/podcast_id={podcast_id}/audio_features.parquet",
-            f"turns/podcast_id={podcast_id}/metrics.parquet",
-        ]
+        rels = []
+        for tree in ("episodes", "turns_text", "acoustics", "turns_metrics"):
+            loc = self.shard_map.locate(tree, podcast_id)
+            if loc is not None:
+                rels.append(self.shard_map.relpath(tree, loc.part))
         with self._source.downloads_enabled():
             return {rel: self._source.path(rel) is not None for rel in rels}
 
@@ -513,22 +552,22 @@ class ParquetBackend:
         Returns:
             List of turn dicts, sorted by start_time.
         """
-        text_path = self._turns_text_path(podcast_id)
-        if text_path is None:
+        text_table = self._read_tree("turns_text", podcast_id)
+        if text_table is None:
             if podcast_id not in self._missing_turns_warned:
                 self._missing_turns_warned.add(podcast_id)
                 logger.warning(
                     "No turn data for podcast_id=%s, so its episodes will have "
-                    "no turns. Turn coverage in SPoRC is partial (~33%% of "
-                    "episodes); use Episode.has_turn_data to tell a coverage "
-                    "gap apart from an episode that genuinely has no turns.",
+                    "no turns. Turn coverage in SPoRC is partial (~65%% of "
+                    "episodes as of dataset version 1.1, up from ~33%% in 1.0); "
+                    "use Episode.has_turn_data to tell a coverage gap apart "
+                    "from an episode that genuinely has no turns.",
                     podcast_id,
                 )
             return []
 
         import pyarrow.compute as pc
 
-        text_table = pq.ParquetFile(text_path).read()
         # Filter using pyarrow compute (avoids pandas conversion for non-matching rows)
         mask = pc.equal(text_table.column("episode_id"), episode_id)
         text_table = text_table.filter(mask)
@@ -537,19 +576,19 @@ class ParquetBackend:
             return []
 
         if include_audio:
-            audio_path = self._source.path(
-                f"turns/podcast_id={podcast_id}/audio_features.parquet"
-            )
-            if audio_path is not None:
-                audio_table = pq.ParquetFile(audio_path).read()
+            audio_table = self._read_tree("acoustics", podcast_id)
+            if audio_table is not None:
                 audio_mask = pc.equal(audio_table.column("episode_id"), episode_id)
                 audio_table = audio_table.filter(audio_mask)
                 # Drop duplicate key columns before join, convert to pandas for merge
                 text_df = text_table.to_pandas()
                 audio_df = audio_table.to_pandas()
                 text_df = text_df.merge(
-                    audio_df.drop(columns=["episode_id", "podcast_id", "mp3_url"], errors="ignore"),
-                    on=["turn_count", "start_time"],
+                    audio_df.drop(columns=["episode_id", "podcast_id"],
+                                  errors="ignore"),
+                    # turn_count alone: the acoustics tree no longer repeats
+                    # start_time, and turn_count is unique within an episode.
+                    on=["turn_count"],
                     how="left",
                     suffixes=("", "_audio"),
                 )
@@ -805,16 +844,11 @@ class ParquetBackend:
             self._episode_partition_cache.move_to_end(podcast_id)
             return cached
 
-        path = self._source.path(
-            f"episodes/podcast_id={podcast_id}/data.parquet"
-        )
-        if path is None:
+        table = self._read_tree("episodes", podcast_id)
+        if table is None:
             rows: List[Dict[str, Any]] = []
         else:
-            # ParquetFile(...).read(), not pq.read_table(path): the latter infers
-            # hive partitioning from the podcast_id=<id> parent directory and
-            # then collides with the file's own podcast_id column.
-            rows = pq.ParquetFile(path).read().to_pandas().to_dict(orient="records")
+            rows = table.to_pandas().to_dict(orient="records")
 
         self._episode_partition_cache[podcast_id] = rows
         # Partitions carry full transcripts, so this is bounded by podcast count
@@ -917,9 +951,10 @@ class ParquetBackend:
                     speaker = list(speaker)
                 except (TypeError, ValueError):
                     speaker = [str(speaker)]
-            if not speaker:
-                continue
-
+            # An empty speaker list is kept. Where diarization produced no
+            # segments the transcript arrives as one unattributed turn, and
+            # dropping it here would lose the text entirely rather than leave
+            # it anonymous.
             text = str(row.get("turn_text", "")).strip()
             if not text:
                 continue
@@ -946,8 +981,18 @@ class ParquetBackend:
                         "f0_semitone_from_27_5hz_sma3nz_mean"
                     ),
                     f1_frequency_sma3nz_mean=row.get("f1_frequency_sma3nz_mean"),
+                    mfcc1_sma3_stdev=row.get("mfcc1_sma3_stdev"),
+                    mfcc2_sma3_stdev=row.get("mfcc2_sma3_stdev"),
+                    mfcc3_sma3_stdev=row.get("mfcc3_sma3_stdev"),
+                    mfcc4_sma3_stdev=row.get("mfcc4_sma3_stdev"),
+                    f0_semitone_from_27_5hz_sma3nz_stdev=row.get(
+                        "f0_semitone_from_27_5hz_sma3nz_stdev"
+                    ),
+                    f1_frequency_sma3nz_stdev=row.get("f1_frequency_sma3nz_stdev"),
                     inferred_speaker_role=str(row.get("inferred_speaker_role", "")) or None,
                     inferred_speaker_name=str(row.get("inferred_speaker_name", "")) or None,
+                    stored_word_count=row.get("word_count"),
+                    speakers_recomputed=row.get("speakers_recomputed"),
                     mp3_url=str(row.get("mp3_url", "")) or None,
                 )
                 turns.append(turn)
@@ -1002,16 +1047,42 @@ class ParquetBackend:
 
         Deliberately does not fetch: this is the scope a scan can cover.
         """
-        d = os.path.join(self.data_dir, "turns")
-        if not os.path.isdir(d):
+        sm = self.shard_map
+        # One existence check per part file rather than per podcast: a part
+        # holds on the order of a thousand podcasts, so this is ~127 stat calls
+        # instead of ~197,000.
+        local = {p for p in sm.parts("turns_text")
+                 if self._source.exists_locally(sm.relpath("turns_text", p))}
+        if not local:
             return []
-        out = []
-        for name in sorted(os.listdir(d)):
-            if not name.startswith("podcast_id="):
+        return sorted(pid for pid, loc in sm.items("turns_text")
+                      if loc.part in local)
+
+    def _local_turn_tables(self, podcast_id: Optional[str] = None):
+        """
+        Turn tables already on disk, for scans that must not trigger a download.
+
+        Yields whole part files rather than per-podcast row groups: a scan reads
+        everything local anyway, and one read of a part beats a thousand reads
+        of the row groups inside it.
+        """
+        sm = self.shard_map
+        if podcast_id is not None:
+            loc = sm.locate("turns_text", podcast_id)
+            if loc is None:
+                return
+            rel = sm.relpath("turns_text", loc.part)
+            if not self._source.exists_locally(rel):
+                return
+            path = os.path.join(self._source.root, rel)
+            yield pq.ParquetFile(path).read_row_group(loc.row_group)
+            return
+
+        for part in sm.parts("turns_text"):
+            rel = sm.relpath("turns_text", part)
+            if not self._source.exists_locally(rel):
                 continue
-            if os.path.exists(os.path.join(d, name, "text.parquet")):
-                out.append(name.split("=", 1)[1])
-        return out
+            yield pq.ParquetFile(os.path.join(self._source.root, rel)).read()
 
     def _scan_turns(
         self,
@@ -1033,16 +1104,10 @@ class ParquetBackend:
         """
         import pyarrow.compute as pc
 
-        pids = [podcast_id] if podcast_id else self.local_turn_podcast_ids()
         terms = [t for t in query.lower().split() if t] or [query.lower()]
         results: List[Dict[str, Any]] = []
 
-        for pid in pids:
-            path = os.path.join(self.data_dir, "turns",
-                                f"podcast_id={pid}", "text.parquet")
-            if not os.path.exists(path):
-                continue
-            table = pq.ParquetFile(path).read()
+        for table in self._local_turn_tables(podcast_id):
             if table.num_rows == 0:
                 continue
             text = table.column("turn_text")
@@ -1109,7 +1174,18 @@ class ParquetBackend:
         )
 
     def _ensure_search_db(self) -> None:
-        """Open DuckDB turns_search.duckdb on first text search."""
+        """
+        Open turns_search.duckdb on first text search, with the text if present.
+
+        The index and the turn text ship as two files. ``turns_search.duckdb``
+        holds the inverted index and enough columns to identify a hit; it does
+        not hold the text, which would nearly triple it. ``turns_text.duckdb``
+        holds the text and is optional, so it is attached when it happens to be
+        there and simply left out when it is not.
+
+        Sets ``_has_text_db``, which decides whether a search can return the
+        matched text from SQL or has to fall back to the Parquet scan.
+        """
         if self._search_db_con is not None:
             return
         try:
@@ -1123,14 +1199,28 @@ class ParquetBackend:
         if not os.path.exists(path):
             raise IndexNotBuiltError(
                 f"DuckDB search database not found at {path}. It is excluded "
-                "from the default download because of its size (~26 GB); "
+                "from the default download because of its size (~14 GB); "
                 "fetch it with SPORCDataset(include_search_db=True). To build "
                 "it from local Parquet instead: python scripts/build_indexes.py "
                 f"--data-dir {self.data_dir} --phase 3"
             )
         logger.info("Opening DuckDB search database at %s", path)
-        self._search_db_con = duckdb.connect(path, read_only=True)
-        self._search_db_con.execute("LOAD fts")
+        con = duckdb.connect(path, read_only=True)
+        con.execute("LOAD fts")
+
+        text_path = os.path.join(self._meta_dir, "turns_text.duckdb")
+        self._has_text_db = os.path.exists(text_path)
+        if self._has_text_db:
+            con.execute(f"ATTACH '{text_path}' AS txt (READ_ONLY)")
+            logger.info("Attached turn text database at %s", text_path)
+        else:
+            logger.info(
+                "turns_text.duckdb is not present, so ranked search will return "
+                "turn identifiers without the text, and substring/regex search "
+                "will scan local Parquet instead. Fetch it with "
+                "SPORCDataset(include_search_db=True, include_turn_text=True)."
+            )
+        self._search_db_con = con
 
     # ------------------------------------------------------------------
     # Full-text transcript search
@@ -1165,7 +1255,7 @@ class ParquetBackend:
         Uses the DuckDB full-text index when present. Without it, falls back to
         scanning the turn partitions on disk, which is the intended path for a
         subset of the corpus: scanning ~400 podcasts takes about a second,
-        where the index costs 26 GB.
+        where the index costs 14 GB.
         """
         if not self.has_search_db():
             pods = [podcast_id] if podcast_id else self.local_turn_podcast_ids()
@@ -1178,6 +1268,20 @@ class ParquetBackend:
 
         self._ensure_search_db()
         con = self._search_db_con
+
+        # "exact" and "regex" match against the text itself, which the index
+        # database does not carry. With the optional text database attached they
+        # run in SQL; without it there is nothing to match against, so they fall
+        # back to scanning local Parquet. "fts" needs no text to rank, only to
+        # display, so it always runs here.
+        if mode in ("exact", "regex") and not self._has_text_db:
+            pods = [podcast_id] if podcast_id else self.local_turn_podcast_ids()
+            self._warn_scanning(len(pods))
+            rows = self._scan_turns(
+                query, mode=mode, podcast_id=podcast_id,
+                episode_id=episode_id, speaker_role=speaker_role,
+            )
+            return rows[offset:offset + limit]
 
         where_clauses = []
         params = []
@@ -1196,46 +1300,61 @@ class ParquetBackend:
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
+        # Text comes from the attached database when it is there. Selecting it
+        # is what makes the difference between returning a snippet and returning
+        # a pointer, so the column list is built once and reused.
+        text_col = "x.turn_text" if self._has_text_db else "NULL AS turn_text"
+        text_join = ("JOIN txt.turn_text x USING (episode_id, turn_count)"
+                     if self._has_text_db else "")
+
         if mode == "fts":
+            # Rank first, then attach text to the handful of rows that survive.
+            # Joining before the LIMIT joins all 185M scored rows to get twenty,
+            # which measured about 20 seconds of pure waste per query.
+            inner_where = " AND ".join(c.replace("t.", "") for c in where_clauses)
             sql = f"""
-                WITH scored AS (
-                    SELECT *, fts_main_turns.match_bm25(row_id, ?) AS score
-                    FROM turns
+                WITH top AS (
+                    SELECT episode_id, podcast_id, turn_count, start_time,
+                           end_time, duration, speaker_role, speaker_name,
+                           word_count, score
+                    FROM (
+                        SELECT *, fts_main_turns.match_bm25(row_id, ?) AS score
+                        FROM turns
+                    )
                     WHERE score IS NOT NULL
+                    {"AND " + inner_where if inner_where else ""}
+                    ORDER BY score DESC
+                    LIMIT ? OFFSET ?
                 )
-                SELECT episode_id, podcast_id, turn_count, turn_text,
-                       start_time, end_time, duration, speaker_role,
-                       speaker_name, word_count, score
-                FROM scored
-                {"WHERE " + " AND ".join(c.replace("t.", "") for c in where_clauses) if where_clauses else ""}
-                ORDER BY score DESC
-                LIMIT ? OFFSET ?
+                SELECT top.episode_id, top.podcast_id, top.turn_count,
+                       {text_col}, top.start_time, top.end_time, top.duration,
+                       top.speaker_role, top.speaker_name, top.word_count,
+                       top.score
+                FROM top {text_join.replace("USING (episode_id, turn_count)",
+                                            "ON x.episode_id = top.episode_id "
+                                            "AND x.turn_count = top.turn_count")}
+                ORDER BY top.score DESC
             """
-            result = con.execute(sql, [query] + params + [limit, offset])
-        elif mode == "exact":
+            result = con.execute(sql, [query, limit, offset] + params)
+        elif mode in ("exact", "regex"):
+            # Both match on the text, so they drive from the text table and pick
+            # the metadata up afterwards. Reaching this point means the text
+            # database is attached; without it these modes scanned Parquet above.
+            predicate = ("x.turn_text ILIKE ?" if mode == "exact"
+                         else "regexp_matches(x.turn_text, ?)")
+            pattern = f"%{query}%" if mode == "exact" else query
             sql = f"""
-                SELECT episode_id, podcast_id, turn_count, turn_text,
-                       start_time, end_time, duration, speaker_role,
-                       speaker_name, word_count, 1.0 AS score
-                FROM turns t
-                {where_sql}
-                {"AND" if where_clauses else "WHERE"} t.turn_text ILIKE ?
+                SELECT t.episode_id, t.podcast_id, t.turn_count, x.turn_text,
+                       t.start_time, t.end_time, t.duration, t.speaker_role,
+                       t.speaker_name, t.word_count, 1.0 AS score
+                FROM txt.turn_text x
+                JOIN turns t ON t.episode_id = x.episode_id
+                            AND t.turn_count = x.turn_count
+                WHERE {predicate}
+                {"AND " + " AND ".join(where_clauses) if where_clauses else ""}
                 LIMIT ? OFFSET ?
             """
-            params.append(f"%{query}%")
-            result = con.execute(sql, params + [limit, offset])
-        elif mode == "regex":
-            sql = f"""
-                SELECT episode_id, podcast_id, turn_count, turn_text,
-                       start_time, end_time, duration, speaker_role,
-                       speaker_name, word_count, 1.0 AS score
-                FROM turns t
-                {where_sql}
-                {"AND" if where_clauses else "WHERE"} regexp_matches(t.turn_text, ?)
-                LIMIT ? OFFSET ?
-            """
-            params.append(query)
-            result = con.execute(sql, params + [limit, offset])
+            result = con.execute(sql, [pattern] + params + [limit, offset])
         else:
             raise ValueError(f"Invalid search mode: {mode!r}. Use 'fts', 'exact', or 'regex'.")
 
@@ -1619,18 +1738,16 @@ class ParquetBackend:
         Returns:
             List of turn metric dicts sorted by turn_count.
         """
-        rel = f"turns/podcast_id={podcast_id}/metrics.parquet"
-        metrics_path = self._source.path(rel)
-        if metrics_path is None:
+        table = self._read_tree("turns_metrics", podcast_id)
+        if table is None:
             raise IndexNotBuiltError(
-                f"Turn metrics not found for podcast_id={podcast_id} ({rel}). "
+                f"Turn metrics not found for podcast_id={podcast_id}. "
                 "Build them with: python scripts/build_indexes.py --data-dir "
                 f"{self.data_dir} --phase 2"
             )
 
         import pyarrow.compute as pc
 
-        table = pq.read_table(metrics_path)
         mask = pc.equal(table.column("episode_id"), episode_id)
         table = table.filter(mask)
 
