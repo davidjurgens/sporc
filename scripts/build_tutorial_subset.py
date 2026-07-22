@@ -39,6 +39,7 @@ Usage:
 
 import argparse
 import collections
+import itertools
 import json
 import logging
 import os
@@ -123,23 +124,26 @@ def choose_parts(sporc, n_parts, want_guests):
 
     labelled = diarized_guest_index(backend, smap)
 
-    # Greedy: take the part adding the most repeat guests, then the next.
-    chosen, pool = [], set()
-    for _ in range(n_parts):
-        best, best_gain, best_pods = None, -1, None
-        for part, pods in pods_in.items():
-            if part in chosen:
-                continue
-            cand = pool | pods
-            gain = sum(1 for ps in labelled.values() if len(ps & cand) >= 2)
-            if gain > best_gain:
-                best, best_gain, best_pods = part, gain, cand
-        if best is None:
-            break
-        chosen.append(best)
-        pool = best_pods
-        logger.info("  + %s -> %d podcasts, %d repeat guests so far",
-                    best, len(pool), best_gain)
+    def n_repeat(pods):
+        return sum(1 for ps in labelled.values() if len(ps & pods) >= 2)
+
+    # Search combinations rather than growing greedily. Guests are what makes a
+    # combination good and they do not add up: a part rich on its own can share
+    # its guests with the parts you would pick next, while two thinner parts
+    # that happen to share shows beat it together. Greedy picked 34 here where
+    # the best triple holds 42.
+    ranked = sorted(pods_in, key=lambda p: -n_repeat(pods_in[p]))
+    pool_parts = ranked[:max(8, n_parts * 3)]
+    best_combo, best_gain = None, -1
+    for combo in itertools.combinations(pool_parts, min(n_parts, len(pool_parts))):
+        pods = set().union(*(pods_in[p] for p in combo))
+        gain = n_repeat(pods)
+        if gain > best_gain:
+            best_combo, best_gain = combo, gain
+    chosen = list(best_combo)
+    pool = set().union(*(pods_in[p] for p in chosen))
+    for part in chosen:
+        logger.info("  + %s (%d podcasts)", part, len(pods_in[part]))
 
     real = {n: ps & pool for n, ps in labelled.items()}
     real = {n: ps for n, ps in real.items() if len(ps) >= 2}
