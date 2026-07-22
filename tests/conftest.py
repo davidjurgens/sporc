@@ -168,7 +168,10 @@ def tmp_parquet_layout(tmp_path):
         "end_time": [2.0, 4.0],
         "duration": [2.0, 1.5],
         "turn_count": [0, 1],
-        "word_count": [2, 2],
+        # Aligned tokens, deliberately not equal to the word count: this is the
+        # column the dataset used to call word_count, and the whole point of the
+        # rename is that the two are different numbers.
+        "token_count": [3, 3],
         "inferred_speaker_name": ["Ira Glass", "A Guest"],
         "inferred_speaker_role": ["host", "guest"],
         "speakers_recomputed": [True, True],

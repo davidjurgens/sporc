@@ -1032,7 +1032,12 @@ class ParquetBackend:
                     f1_frequency_sma3nz_stdev=row.get("f1_frequency_sma3nz_stdev"),
                     inferred_speaker_role=str(row.get("inferred_speaker_role", "")) or None,
                     inferred_speaker_name=str(row.get("inferred_speaker_name", "")) or None,
-                    stored_token_count=row.get("word_count"),
+                    # token_count since the rename; word_count is the
+                    # same column under its old, misleading name in
+                    # layouts built before it. Both mean aligned tokens
+                    # -- turns/text never held a word count.
+                    stored_token_count=row.get(
+                        "token_count", row.get("word_count")),
                     speakers_recomputed=row.get("speakers_recomputed"),
                     mp3_url=str(row.get("mp3_url", "")) or None,
                 )

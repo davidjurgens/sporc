@@ -322,3 +322,38 @@ class TestWordCountAgreesAcrossTrees:
                 f"turn {turn.turn_count}: Turn.word_count={turn.word_count} "
                 f"but turns/metrics says {expected[turn.turn_count]}"
             )
+
+
+@pytest.mark.integration
+class TestTokenCountComesFromTheRenamedColumn:
+    """
+    turns/text carries the aligner's count. It was called word_count, which
+    collided with a different measure of the same name in turns/metrics, so the
+    dataset renamed it to token_count.
+    """
+
+    def test_token_count_is_read_from_the_tree(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        # The fixture stores 3 tokens against 2-word text on purpose.
+        assert [t.token_count for t in episode.turns] == [3, 3]
+        assert [t.word_count for t in episode.turns] == [2, 2]
+
+    def test_a_pre_rename_layout_still_reads(self, tmp_parquet_layout, tmp_path):
+        # Layouts built before the rename spell it word_count. It meant tokens
+        # there too, so it is read rather than dropped on the floor.
+        import shutil
+        alt = tmp_path / "old_layout"
+        shutil.copytree(tmp_parquet_layout, alt)
+        part = alt / "turns" / "text" / "part-000-000.parquet"
+        table = pq.ParquetFile(str(part)).read()
+        renamed = ["word_count" if n == "token_count" else n
+                   for n in table.schema.names]
+        pq.write_table(table.rename_columns(renamed), str(part),
+                       row_group_size=table.num_rows)
+
+        backend = ParquetBackend(str(alt))
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        assert [t.token_count for t in episode.turns] == [3, 3]

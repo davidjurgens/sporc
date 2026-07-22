@@ -50,11 +50,13 @@ still the way to tell a coverage gap from a genuinely turn-less episode.
   corrected matcher in dataset 1.1 or were carried over from 1.0 unchanged.
   Filter on it if your work needs a single consistent method.
 - **`Turn.word_count` counts words, and `Turn.token_count` is new.** The
-  dataset ships two columns called `word_count` that mean different things:
-  `turns/text.word_count` counts the timestamped tokens the transcript aligned
+  dataset carries two counts per turn that mean different things:
+  `turns/text.token_count` counts the timestamped tokens the transcript aligned
   to the turn, punctuation included, while `turns/metrics.word_count` and
   `episode_metrics.total_word_count` count whitespace-separated words. The
-  median ratio between them is 1.21.
+  median ratio between them is 1.21. Both were called `word_count` while 1.1
+  was being built; the dataset renamed the first one before release, and the
+  client reads either name.
 
   `Turn.word_count` is the words one. It is defined for every turn, and a
   turn's count now adds up to the episode totals it belongs to. `token_count`

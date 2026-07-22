@@ -96,88 +96,98 @@ def _read(path, columns=None):
     return pq.ParquetFile(path).read(columns=columns).to_pandas()
 
 
-def find_repeat_guest_podcasts(sporc, snap, want_guests, max_scan):
+def choose_parts(sporc, n_parts, want_guests):
     """
-    Podcasts sharing a guest who is actually diarized in them.
+    Pick the ``n_parts`` turn parts that between them hold the most repeat
+    guests, and return the podcasts living in them.
 
-    `guest_predicted_names` cannot be used for this: it lists people *mentioned*,
-    so its top "guests" are figures like George Floyd who never spoke on any
-    podcast. Only a non-empty `guest_speaker_labels` means a guest was really
-    there, and that lives in the episode partitions rather than the catalogs --
-    hence the scan.
+    A subset drawn from a handful of parts is one a user can actually rebuild:
+    podcasts are packed into shared part files, so fetching a scattered
+    selection costs whole parts either way. Measured on dataset 1.1, 1,000
+    podcasts sampled at random span 116 of the 127 turn parts and 11.6 GB,
+    where the same number taken from within a few parts costs those parts and
+    nothing else.
+
+    Repeat guests are what makes this tight rather than arbitrary. Notebook 04
+    needs people who appear on two different shows *and* were diarized on both,
+    and only about 2.5% of cross-podcast guests ever were. The richest single
+    part holds 7 of them; three parts together reach into the forties, which is
+    why the default is three and not one.
     """
-    sn = _read(f"{snap}/metadata/speaker_name_index.parquet")
-    ec = _read(f"{snap}/metadata/episode_catalog.parquet",
-               ["episode_id", "podcast_id", "num_main_speakers"])
-    ec["nms"] = pd.to_numeric(ec.num_main_speakers, errors="coerce").fillna(0)
-    multi = set(ec[ec.nms >= 2].episode_id)
-
-    g = sn[(sn.role == "guest") & (sn.episode_id.isin(multi))]
-    agg = g.groupby("name_normalized").agg(n_pods=("podcast_id", "nunique"))
-    cand = set(agg[agg.n_pods >= 2].index)
-    pods = sorted(g[g.name_normalized.isin(cand)].podcast_id.unique())[:max_scan]
-    logger.info("Scanning %d podcasts for guests with real speaker labels", len(pods))
-
     backend = sporc._parquet_backend
+    smap = backend.shard_map
+    part_of = {pid: loc[0] for pid, loc in smap.items("turns_text")}
+    pods_in = collections.defaultdict(set)
+    for pid, part in part_of.items():
+        pods_in[part].add(pid)
 
-    def scan(pid):
-        # Reads one row group out of a shared part file. Before dataset 1.1 this
-        # built the path episodes/podcast_id=<id>/data.parquet by hand; against
-        # the packed layout that resolves to nothing, and the bare except below
-        # turned every miss into an empty result, so the scan found no guests at
-        # all and said so only by building a useless subset.
-        try:
-            table = backend._read_tree(
-                "episodes", pid, columns=["episode_id", "guest_speaker_labels"])
-            if table is None:
-                return pid, set()
-            df = table.to_pandas()
-        except Exception:
-            logger.exception("Scan failed for podcast %s", pid)
-            return pid, set()
-        found = set()
-        for gl in df.guest_speaker_labels:
-            if gl is None:
+    labelled = diarized_guest_index(backend, smap)
+
+    # Greedy: take the part adding the most repeat guests, then the next.
+    chosen, pool = [], set()
+    for _ in range(n_parts):
+        best, best_gain, best_pods = None, -1, None
+        for part, pods in pods_in.items():
+            if part in chosen:
                 continue
-            s = gl if isinstance(gl, str) else json.dumps(gl)
-            if not s or s in ("{}", "SPEAKER_DATA_UNAVAILABLE"):
+            cand = pool | pods
+            gain = sum(1 for ps in labelled.values() if len(ps & cand) >= 2)
+            if gain > best_gain:
+                best, best_gain, best_pods = part, gain, cand
+        if best is None:
+            break
+        chosen.append(best)
+        pool = best_pods
+        logger.info("  + %s -> %d podcasts, %d repeat guests so far",
+                    best, len(pool), best_gain)
+
+    real = {n: ps & pool for n, ps in labelled.items()}
+    real = {n: ps for n, ps in real.items() if len(ps) >= 2}
+    if len(real) < want_guests:
+        logger.warning(
+            "Only %d repeat guests available in %d parts (wanted %d). "
+            "Notebook 04 works with fewer, but with less to say; raise "
+            "--parts to widen the pool.", len(real), len(chosen), want_guests)
+    logger.info("Parts chosen: %s", ", ".join(chosen))
+    logger.info("Universe: %d podcasts, %d repeat guests", len(pool), len(real))
+    return chosen, pool, real
+
+
+def diarized_guest_index(backend, smap):
+    """
+    Guest name -> podcasts where that guest was actually diarized.
+
+    `guest_predicted_names` lists people *mentioned*, so it cannot be used:
+    its top "guests" are figures who never spoke on any podcast. A non-empty
+    `guest_speaker_labels` is the only evidence a guest was really there, and
+    that lives in the episode rows rather than the catalogs.
+    """
+    labelled = collections.defaultdict(set)
+    parts = sorted({loc[0] for _, loc in smap.items("episodes")})
+    logger.info("Indexing diarized guests across %d episode parts", len(parts))
+    for i, part in enumerate(parts, 1):
+        path = backend._source.path(smap.relpath("episodes", part))
+        if path is None:
+            continue
+        t = pq.ParquetFile(path).read(
+            columns=["podcast_id", "guest_speaker_labels"])
+        for pid, gl in zip(t.column("podcast_id").to_pylist(),
+                           t.column("guest_speaker_labels").to_pylist()):
+            if not gl or gl in ("{}", "SPEAKER_DATA_UNAVAILABLE"):
                 continue
+            raw = gl if isinstance(gl, str) else json.dumps(gl)
             try:
-                d = json.loads(s)
+                d = json.loads(raw)
             except Exception:
                 continue
             if isinstance(d, dict):
-                found |= {str(k).strip().lower() for k in d}
-        return pid, found
-
-    real = collections.defaultdict(set)
-    with ThreadPoolExecutor(max_workers=16) as ex:
-        for i, (pid, found) in enumerate(ex.map(scan, pods), 1):
-            for name in found:
-                real[name].add(pid)
-            if i % 1000 == 0:
-                logger.info("  %d/%d scanned, %d named guests so far", i, len(pods), len(real))
-
-    shared = {n: p for n, p in real.items() if len(p) >= 2}
-    logger.info("Guests with real labels on >=2 podcasts: %d", len(shared))
-
-    dropped = sorted(n for n in shared if n in NOT_GUESTS)
-    if dropped:
-        # These rank near the top precisely because the artefact scales with how
-        # much a name is discussed, so leaving them in would build the subset
-        # around people who never spoke.
-        logger.info("Dropping %d known non-guests from the selection: %s",
-                    len(dropped), ", ".join(dropped))
-    shared = {n: p for n, p in shared.items() if n not in NOT_GUESTS}
-
-    keep, chosen = set(), []
-    for name, pids in sorted(shared.items(), key=lambda kv: -len(kv[1])):
-        if len(chosen) >= want_guests:
-            break
-        chosen.append(name)
-        keep |= set(pids)
-    logger.info("Selected %d repeat guests spanning %d podcasts", len(chosen), len(keep))
-    return keep, chosen
+                for k in d:
+                    name = str(k).strip().lower()
+                    if name and name not in NOT_GUESTS:
+                        labelled[name].add(pid)
+        if i % 20 == 0:
+            logger.info("  %d/%d episode parts", i, len(parts))
+    return labelled
 
 
 def main():
@@ -187,8 +197,12 @@ def main():
                    help="Approximate episodes from the random diarized sample")
     p.add_argument("--guests", type=int, default=40,
                    help="Repeat guests to guarantee (drives notebook 04)")
-    p.add_argument("--max-scan", type=int, default=6000,
-                   help="Cap on podcasts scanned for real repeat guests")
+    p.add_argument("--parts", type=int, default=3,
+                   help="Part files to draw the whole subset from. The point "
+                        "of the subset is that it is cheap to rebuild, and a "
+                        "scattered selection costs whole parts anyway; three "
+                        "is where there are enough diarized repeat guests for "
+                        "notebook 04.")
     p.add_argument("--seed", type=int, default=20200525)
     p.add_argument("--data-dir", default=None,
                    help="Local copy of the full Parquet layout to build from. "
@@ -212,13 +226,22 @@ def main():
     snap = sporc._parquet_backend.data_dir
     logger.info("Snapshot: %s", snap)
 
-    # 1. Podcasts containing validated repeat guests.
-    guest_pods, guest_names = find_repeat_guest_podcasts(
-        sporc, snap, args.guests, args.max_scan)
+    # 1. Confine the whole selection to a few part files, then take the repeat
+    #    guests from inside them.
+    parts, universe, real_guests = choose_parts(sporc, args.parts, args.guests)
+    ranked = sorted(real_guests.items(), key=lambda kv: -len(kv[1]))
+    guest_names = [n for n, _ in ranked[:args.guests]]
+    guest_pods = set()
+    for n in guest_names:
+        guest_pods |= real_guests[n]
+    logger.info("Repeat guests kept: %d, spanning %d podcasts",
+                len(guest_names), len(guest_pods))
 
-    # 2. A random diarized sample for the general-purpose notebooks.
+    # 2. A random diarized sample for the general-purpose notebooks, drawn from
+    #    the same parts so the subset stays cheap to rebuild.
     ec = _read(f"{snap}/metadata/episode_catalog.parquet",
                ["episode_id", "podcast_id", "num_main_speakers"])
+    ec = ec[ec.podcast_id.isin(universe)]
     ec["nms"] = pd.to_numeric(ec.num_main_speakers, errors="coerce").fillna(0)
     diar = ec[ec.nms > 0]
     per_pod = diar.groupby("podcast_id").size()
@@ -247,7 +270,9 @@ def main():
     with open(ids_path, "w") as f:
         f.write("# Podcasts in the tutorial subset. Generated by "
                 "scripts/build_tutorial_subset.py\n")
-        f.write(f"# seed={args.seed} episodes={args.episodes} guests={args.guests}\n")
+        f.write(f"# seed={args.seed} episodes={args.episodes} "
+                f"guests={len(guest_names)}\n")
+        f.write(f"# drawn from {len(parts)} part(s): {', '.join(parts)}\n")
         for pid in pods:
             f.write(pid + "\n")
     logger.info("Wrote %s", ids_path)
