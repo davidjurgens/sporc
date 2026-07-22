@@ -38,6 +38,14 @@ _CACHE_VERSION = 3
 # podcast's episodes only needs its own partition resident.
 _EPISODE_PARTITION_CACHE_SIZE = 8
 
+# Row groups held in memory, keyed on (tree, podcast_id). Without this, reading
+# a podcast's episodes re-read its turns and its acoustics once per episode --
+# 80 row-group reads for a 40-episode show instead of 2. Kept smaller than the
+# episode cache because a podcast's acoustics run to tens of megabytes, and
+# because two entries already cover the common case of turns plus acoustics for
+# the podcast being iterated.
+_TREE_CACHE_SIZE = 4
+
 
 class ParquetBackend:
     """
@@ -64,6 +72,8 @@ class ParquetBackend:
         # podcast_id -> parsed episode rows; see _read_podcast_episodes_partition.
         self._episode_partition_cache: "OrderedDict[str, List[Dict[str, Any]]]" = \
             OrderedDict()
+        # (tree, podcast_id) -> row group; see _read_tree.
+        self._tree_cache: "OrderedDict[Any, Any]" = OrderedDict()
 
         if not os.path.isdir(self._meta_dir):
             raise DatasetAccessError(
@@ -423,8 +433,31 @@ class ParquetBackend:
         path = self._source.path(self.shard_map.relpath(tree, loc.part))
         if path is None:
             return None
-        return pq.ParquetFile(path).read_row_group(loc.row_group,
-                                                   columns=columns)
+
+        # Cached on the full row group, so a request for a subset of columns
+        # neither reads from nor writes to the cache. Serving a projection from
+        # a cached full read would be free, but storing one would let a
+        # single-column probe -- _episode_ids_with_turns does exactly that --
+        # shadow the full table for every later reader.
+        #
+        # Episodes are excluded: _read_podcast_episodes_partition already caches
+        # them, parsed, and holding the row group here as well would keep every
+        # transcript in memory twice over the largest tree in the corpus.
+        cacheable = columns is None and tree != "episodes"
+        key = (tree, podcast_id)
+        if cacheable:
+            hit = self._tree_cache.get(key)
+            if hit is not None:
+                self._tree_cache.move_to_end(key)
+                return hit
+
+        table = pq.ParquetFile(path).read_row_group(loc.row_group,
+                                                    columns=columns)
+        if cacheable:
+            self._tree_cache[key] = table
+            while len(self._tree_cache) > _TREE_CACHE_SIZE:
+                self._tree_cache.popitem(last=False)
+        return table
 
     def has_turn_data(self, podcast_id: str) -> bool:
         """

@@ -111,6 +111,79 @@ class TestEpisodePartitionCache:
         assert ep is not None
 
 
+@pytest.fixture
+def count_tree_reads(monkeypatch):
+    """Count real opens of the turn and acoustic part files, by tree."""
+    calls = []
+    real = pq.ParquetFile
+
+    def counting(path, *a, **kw):
+        p = str(path)
+        if "turns" in p or "acoustics" in p:
+            calls.append(p)
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(pb_module.pq, "ParquetFile", counting)
+    return calls
+
+
+@pytest.mark.integration
+class TestTreeRowGroupCache:
+    """
+    The episode partition got a cache; turns and acoustics did not, so reading a
+    podcast's episodes re-read both once per episode -- 80 row-group reads for a
+    40-episode show instead of 2.
+    """
+
+    def test_repeated_turn_reads_hit_the_file_once_per_tree(
+        self, tmp_parquet_layout, count_tree_reads
+    ):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        for _ in range(5):
+            backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS,
+                                          include_audio=True)
+
+        # One for turns/text, one for acoustics, and no more.
+        assert len(count_tree_reads) == 2, (
+            f"expected 2 reads, got {len(count_tree_reads)}: {count_tree_reads}"
+        )
+
+    def test_cached_read_returns_the_same_rows(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        first = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS)
+        second = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        assert [r["turn_text"] for r in first] == [r["turn_text"] for r in second]
+
+    def test_column_projection_does_not_poison_the_cache(self, tmp_parquet_layout):
+        # _episode_ids_with_turns reads a single column. If that were cached
+        # under the same key, every later reader would get a table with one
+        # column and turns would come back textless.
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        backend._episode_ids_with_turns(PID_WITH_TURNS)
+        table = backend._read_tree("turns_text", PID_WITH_TURNS)
+
+        assert "turn_text" in table.schema.names
+
+    def test_cache_is_bounded(self, tmp_parquet_layout, monkeypatch):
+        monkeypatch.setattr(pb_module, "_TREE_CACHE_SIZE", 1)
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        backend._read_tree("turns_text", PID_WITH_TURNS)
+        backend._read_tree("acoustics", PID_WITH_TURNS)
+
+        assert len(backend._tree_cache) <= 1
+
+    def test_absent_podcast_is_not_cached_as_a_table(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        assert backend._read_tree("turns_text", PID_NO_TURNS) is None
+        assert ("turns_text", PID_NO_TURNS) not in backend._tree_cache
+
+
 @pytest.mark.integration
 class TestMisleadingApiWarnings:
     """
