@@ -17,5 +17,12 @@ dist/
 subsets/
 sporc_parquet/
 
+# Credentials. Never commit these: the repo is public, and a token pushed even
+# once is compromised whether or not the commit is later removed.
+.env
+.env.*
+*.pem
+.netrc
+
 # Agent scratch file; see the note in the repo's contributing docs.
 CLAUDE.md
