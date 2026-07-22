@@ -298,3 +298,27 @@ class TestPrefetchResolution:
         ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
         with pytest.raises(ValueError, match="resolved to no podcasts"):
             ds.prefetch(["ffffffffffff"])
+
+
+@pytest.mark.integration
+class TestWordCountAgreesAcrossTrees:
+    """
+    turns/text.word_count counts aligned tokens and turns/metrics.word_count
+    counts words. Turn.word_count has to be the second one, or a turn does not
+    add up to the episode totals built from the same definition.
+    """
+
+    def test_turn_word_count_matches_the_metrics_tree(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        metrics = backend._read_tree("turns_metrics", PID_WITH_TURNS)
+        expected = dict(zip(metrics.column("turn_count").to_pylist(),
+                            metrics.column("word_count").to_pylist()))
+
+        assert episode.turns, "fixture must supply turns"
+        for turn in episode.turns:
+            assert turn.word_count == expected[turn.turn_count], (
+                f"turn {turn.turn_count}: Turn.word_count={turn.word_count} "
+                f"but turns/metrics says {expected[turn.turn_count]}"
+            )
