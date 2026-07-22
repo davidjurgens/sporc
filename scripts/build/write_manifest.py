@@ -73,6 +73,10 @@ def main():
         if base.startswith("_"):
             print(f"  skipping client cache metadata/{base}", flush=True)
             continue
+        # Documentation is counted once, under "docs", so that metadata/ stays
+        # a list of data files and every directory's README is treated alike.
+        if base == "README.md":
+            continue
         size = os.path.getsize(f)
         entry = {"bytes": size}
         if base.endswith(".parquet"):
@@ -82,10 +86,26 @@ def main():
         total_bytes += size
         print(f"  metadata/{base:32s} {size/2**20:9.1f} MB", flush=True)
 
-    cat = pq.ParquetFile(f"{OUT}/metadata/episode_catalog.parquet").read(
-        columns=["total_sp_labels"])
-    with_turns = sum(1 for v in cat.column("total_sp_labels").to_pylist()
-                     if (v or 0) > 0)
+    # Every README in the release, including the root one and the per-directory
+    # ones. Listed so the manifest's file count matches what gets uploaded --
+    # an upload allow-list built from the trees and metadata/ alone would drop
+    # the documentation without anything noticing.
+    docs = {}
+    for f in sorted(glob.glob(os.path.join(OUT, "**", "README.md"),
+                              recursive=True)):
+        rel = os.path.relpath(f, OUT)
+        docs[rel] = {"bytes": os.path.getsize(f)}
+        total_files += 1
+        total_bytes += os.path.getsize(f)
+        print(f"  doc {rel:38s} {os.path.getsize(f)/2**10:9.1f} KB", flush=True)
+
+    # From episode_metrics, which has one row per episode that actually has
+    # turns. Counting episode_catalog.total_sp_labels > 0 instead undercounts
+    # by 12: those episodes carry a single turn and no speaker label, so they
+    # have turn data while the label count says they do not. Verified against
+    # COUNT(DISTINCT episode_id) over turns/text, which is 731,113.
+    with_turns = pq.ParquetFile(
+        f"{OUT}/metadata/episode_metrics.parquet").metadata.num_rows
 
     manifest = {
         "version": "1.1",
@@ -117,6 +137,7 @@ def main():
                      "to read it with a single ranged read."),
             "trees": trees,
             "metadata": meta,
+            "docs": docs,
         },
         "id_scheme": {
             "podcast_id": "md5(rssUrl)[:12]",
