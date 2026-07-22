@@ -536,14 +536,41 @@ class SPORCDataset:
                 logger.debug("Skipping podcast during subcategory search: %s", e)
         return podcasts
 
+    def _warn_if_whole_corpus(self, n: int, what: str, instead: str) -> None:
+        """
+        Warn before materializing the entire corpus.
+
+        Building an object reads that podcast's row group, so these two methods
+        cost one read per podcast. On the full dataset that is 228,099 reads
+        covering the whole 15 GB episodes tree, and on a lazy Hub source every
+        one of them is a download. Both used to do that in silence, which on a
+        metered connection is an unpleasant way to find out.
+        """
+        if n < self._WHOLE_CORPUS_WARN_AT:
+            return
+        logger.warning(
+            "%s is about to build %s objects, one partition read each. "
+            "On a lazy source that downloads most of the corpus. Use %s "
+            "to bound the work.", what, f"{n:,}", instead)
+
+    # Roughly the point where this stops being a subset and starts being a
+    # download. A tutorial subset (403 podcasts) should say nothing.
+    _WHOLE_CORPUS_WARN_AT = 5000
+
     def get_all_podcasts(self) -> List[Podcast]:
         """
         Get all podcasts in the dataset.
 
         Returns:
             List of all Podcast objects
+
+        Note:
+            Costs one partition read per podcast. Prefer
+            ``iterate_podcasts(max_podcasts=N)`` on the full corpus.
         """
         podcast_ids = self._parquet_backend.get_all_podcast_ids()
+        self._warn_if_whole_corpus(len(podcast_ids), "get_all_podcasts()",
+                                   "iterate_podcasts(max_podcasts=N)")
         podcasts = []
         for pid in podcast_ids:
             try:
@@ -558,8 +585,14 @@ class SPORCDataset:
 
         Returns:
             List of all Episode objects
+
+        Note:
+            Costs one partition read per episode's podcast. Prefer
+            ``iterate_episodes(max_episodes=N)`` on the full corpus.
         """
         rows = self._parquet_backend.search_episodes()
+        self._warn_if_whole_corpus(len(rows), "get_all_episodes()",
+                                   "iterate_episodes(max_episodes=N)")
         episodes = []
         for row in rows:
             try:

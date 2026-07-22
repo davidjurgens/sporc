@@ -271,3 +271,47 @@ class TestIndexNotBuiltErrorPropagation:
         self._setup_raise(ds, "filter_episodes_by_metrics")
         with pytest.raises(IndexNotBuiltError):
             ds.filter_episodes_by_metrics(min_word_count=100)
+
+
+# ===================================================================
+# Whole-corpus materialization
+# ===================================================================
+class TestGetAllWarnsBeforeReadingTheCorpus:
+    """
+    get_all_podcasts/get_all_episodes build one object per podcast partition.
+    On the full dataset that is 228,099 reads over the whole episodes tree, and
+    on a lazy Hub source every one is a download. They used to do it silently.
+    """
+
+    def test_a_subset_sized_corpus_stays_quiet(self, caplog):
+        ds = _make_dataset()
+        ds._parquet_backend.get_all_podcast_ids.return_value = [
+            f"p{i}" for i in range(403)
+        ]
+        with caplog.at_level("WARNING"):
+            ds.get_all_podcasts()
+        assert not caplog.records, "a tutorial subset should not warn"
+
+    def test_a_corpus_sized_corpus_warns_and_names_the_alternative(
+        self, caplog
+    ):
+        ds = _make_dataset()
+        ds._parquet_backend.get_all_podcast_ids.return_value = [
+            f"p{i}" for i in range(228_099)
+        ]
+        with caplog.at_level("WARNING"):
+            ds.get_all_podcasts()
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].getMessage()
+        assert "228,099" in msg
+        assert "iterate_podcasts(max_podcasts=N)" in msg
+
+    def test_get_all_episodes_warns_on_its_own_row_count(self, caplog):
+        ds = _make_dataset()
+        ds._parquet_backend.search_episodes.return_value = [
+            {"podcast_id": "p", "episode_id": f"e{i}"} for i in range(10_000)
+        ]
+        with caplog.at_level("WARNING"):
+            ds.get_all_episodes()
+        assert len(caplog.records) == 1
+        assert "iterate_episodes(max_episodes=N)" in caplog.records[0].getMessage()

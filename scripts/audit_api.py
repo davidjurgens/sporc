@@ -73,10 +73,25 @@ def audit(data_dir, do_search, load_audio):
     check("get_dataset_statistics", ds.get_dataset_statistics,
           expect=lambda v: _assert(v and v.get("total_podcasts", 0) > 0,
                                    "no podcasts in statistics"))
-    pods = check("get_all_podcasts", ds.get_all_podcasts,
-                 expect=lambda v: _assert(len(v) > 0, "empty"))
-    eps = check("get_all_episodes", ds.get_all_episodes,
-                expect=lambda v: _assert(len(v) > 0, "empty"))
+    # get_all_* build one object per podcast partition. That is the point on a
+    # subset and hours on the full corpus, so above a subset's worth of
+    # podcasts audit the bounded iterators instead and say so rather than
+    # reporting a check that was never run.
+    n_pods = len(b.get_all_podcast_ids())
+    if n_pods <= 5000:
+        pods = check("get_all_podcasts", ds.get_all_podcasts,
+                     expect=lambda v: _assert(len(v) > 0, "empty"))
+        eps = check("get_all_episodes", ds.get_all_episodes,
+                    expect=lambda v: _assert(len(v) > 0, "empty"))
+    else:
+        print(f"SKIP  get_all_podcasts/get_all_episodes "
+              f"({n_pods:,} podcasts: one partition read each)")
+        pods = check("iterate_podcasts(as get_all stand-in)",
+                     lambda: list(ds.iterate_podcasts(max_podcasts=25)),
+                     expect=lambda v: _assert(len(v) == 25, f"got {len(v)}"))
+        eps = check("iterate_episodes(as get_all stand-in)",
+                    lambda: list(ds.iterate_episodes(max_episodes=25)),
+                    expect=lambda v: _assert(len(v) == 25, f"got {len(v)}"))
     check("iterate_podcasts", lambda: list(ds.iterate_podcasts(max_podcasts=3)),
           expect=lambda v: _assert(len(v) == 3, f"got {len(v)}"))
     check("iterate_episodes", lambda: list(ds.iterate_episodes(max_episodes=5)),
