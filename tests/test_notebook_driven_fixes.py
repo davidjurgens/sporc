@@ -336,3 +336,42 @@ class TestSubsetRoundTrip:
         ds = SPORCDataset(parquet_dir=out)
         # The catalog must not advertise a podcast whose rows were not copied.
         assert PID_NO_TURNS not in ds._parquet_backend.get_all_podcast_ids()
+
+
+@pytest.mark.integration
+class TestAudioFeaturesAreOptional:
+    """
+    Reading a podcast's turns also read its acoustics, always. That tree is
+    14.5 GB across 140 parts, and against the Hub the join costs whole part
+    files for data most work never looks at.
+    """
+
+    def test_turns_load_without_touching_the_acoustics_tree(
+        self, tmp_parquet_layout, count_tree_reads
+    ):
+        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=False)
+
+        turns = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS)
+        backend._load_turns_into_episode(
+            backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS),
+            PID_WITH_TURNS, EID_WITH_TURNS)
+
+        assert turns, "turns must still load"
+        assert not [p for p in count_tree_reads if "acoustics" in p]
+
+    def test_default_still_joins_the_audio_on(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        rows = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS,
+                                             include_audio=True)
+
+        assert any(r.get("mfcc1_sma3_mean") is not None for r in rows)
+
+    def test_disabled_leaves_audio_fields_empty_rather_than_wrong(
+        self, tmp_parquet_layout
+    ):
+        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=False)
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
+
+        # Absent, not zero: a caller averaging these must see nothing to average.
+        assert all(t.get_audio_features() == {} for t in episode.turns)

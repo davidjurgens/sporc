@@ -44,10 +44,11 @@ class Turn:
     inferred_speaker_role: Optional[str] = None
     inferred_speaker_name: Optional[str] = None
 
-    # Words in the turn as counted when the dataset was built. Read through the
-    # word_count property, which falls back to splitting the text when the
-    # dataset did not supply one.
-    stored_word_count: Optional[int] = None
+    # Timestamped tokens the transcript aligned to this turn. Read through the
+    # token_count property. This is NOT word_count: the transcript tokenises
+    # punctuation separately, so it runs about 21% higher than counting words,
+    # and it is None for turns carried over from dataset 1.0.
+    stored_token_count: Optional[int] = None
 
     # False for turns carried over from 1.0 unchanged, because the inputs
     # needed to redo the word-to-speaker matching no longer exist.
@@ -96,20 +97,38 @@ class Turn:
     @property
     def word_count(self) -> int:
         """
-        Number of words in the turn.
+        Number of words in the turn: whitespace-separated tokens of the text.
 
-        Prefers the count the dataset carries, which 1.1 added, and falls back
-        to splitting the text so turns built by hand or from an older layout
-        still answer.
+        This is the same definition used by ``turns/metrics.word_count`` and by
+        ``episode_metrics.total_word_count``, so per-turn and per-episode counts
+        agree, and it is defined for every turn.
+
+        Deliberately not the dataset's ``turns/text.word_count`` column, which
+        despite the name counts something else -- see :attr:`token_count`.
+        """
+        return len(self.text.split())
+
+    @property
+    def token_count(self) -> Optional[int]:
+        """
+        Timestamped tokens the transcript aligned to this turn, or None.
+
+        The transcript gives every token a timestamp and counts punctuation as
+        a token, so this runs about 21% above :attr:`word_count` -- the median
+        ratio between the two across the corpus is 1.21. Use it when you want
+        what the aligner saw; use word_count when you want words.
+
+        None for the 18,336,086 turns (9.9%) carried over from dataset 1.0,
+        which are exactly those with ``speakers_recomputed`` False. Version 1.0
+        had no such column and the word lists it was derived from are gone.
         """
         # NaN rather than None: joining the acoustics on goes through pandas,
         # which represents a missing integer as float('nan'), and that is not
-        # None. Testing for None alone let NaN through and word counts summed
-        # to NaN for whole episodes.
-        wc = self.stored_word_count
-        if wc is not None and not (isinstance(wc, float) and math.isnan(wc)):
-            return int(wc)
-        return len(self.text.split())
+        # None, so an unguarded read propagates NaN into every sum downstream.
+        tc = self.stored_token_count
+        if tc is None or (isinstance(tc, float) and math.isnan(tc)):
+            return None
+        return int(tc)
 
     @property
     def words_per_second(self) -> float:
@@ -179,6 +198,7 @@ class Turn:
             'inferred_speaker_role': self.inferred_speaker_role,
             'inferred_speaker_name': self.inferred_speaker_name,
             'word_count': self.word_count,
+            'token_count': self.token_count,
             'words_per_second': self.words_per_second,
             'audio_features': self.get_audio_features(),
             'mp3_url': self.mp3_url,

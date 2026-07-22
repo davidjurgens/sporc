@@ -208,6 +208,7 @@ class SPORCDataset:
                  allow_downloads: bool = True,
                  include_search_db: bool = False,
                  include_turn_text: bool = False,
+                 load_audio_features: bool = True,
                  ignore_patterns: Optional[List[str]] = None):
         """
         Initialize the SPORC dataset.
@@ -230,6 +231,13 @@ class SPORCDataset:
                     with ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``
                     keys, or a path to a JSON or newline-delimited text file
                     holding either.
+            load_audio_features: Join acoustic features onto every turn
+                          (default). The acoustics are a separate 14.5 GB tree,
+                          and reading a podcast's turns pulls its acoustics part
+                          too, so set False if you never touch
+                          Turn.get_audio_features() -- it takes the tutorial
+                          subset's working set from 40 GB to 27 GB. Turn's
+                          audio fields are then all None.
             allow_downloads: When False, never fetch anything beyond what is
                              already local; requests for absent data raise
                              ``DataNotLocalError``. Combine with ``subset`` to
@@ -290,7 +298,9 @@ class SPORCDataset:
 
         from .parquet_backend import ParquetBackend
         logger.info("Initializing Parquet backend from %s", parquet_dir)
-        self._parquet_backend = ParquetBackend(parquet_dir, source=source)
+        self._parquet_backend = ParquetBackend(
+            parquet_dir, source=source,
+            load_audio_features=load_audio_features)
         self._loaded = True
 
         if subset is not None:

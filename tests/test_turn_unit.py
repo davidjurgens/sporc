@@ -110,35 +110,49 @@ def test_turn_with_no_speakers_is_allowed():
     assert t.speaker == []
     assert t.word_count == 2
 
-def test_word_count_falls_back_when_the_dataset_count_is_nan():
+def test_word_count_is_words_not_the_datasets_token_count():
     """
-    Some episodes carry a null word_count, and the acoustics join goes through
-    pandas, which turns a missing integer into float('nan'). NaN is not None, so
-    the stored value was returned as-is and summing word counts over an episode
-    produced NaN.
+    turns/text.word_count counts timestamped tokens, punctuation included, and
+    runs ~21% above the word count; turns/metrics.word_count and
+    episode_metrics.total_word_count count whitespace-separated words. Two
+    columns, one name. word_count is the words one, so a turn agrees with the
+    episode totals it is part of.
     """
     t = Turn(speaker=["SPEAKER_00"], text="one two three", start_time=0,
-             end_time=1, duration=1, turn_count=0,
-             stored_word_count=float("nan"))
+             end_time=1, duration=1, turn_count=0, stored_token_count=7)
     assert t.word_count == 3
+    assert t.token_count == 7
     assert t.words_per_second == 3.0
 
 
-def test_word_count_prefers_the_stored_value():
-    # The stored count reflects how the corpus was tokenised, which is not the
-    # same as splitting on whitespace.
+def test_word_count_is_defined_without_any_stored_count():
+    # 9.9% of turns carry no token count at all. word_count still has to answer.
     t = Turn(speaker=["SPEAKER_00"], text="one two three", start_time=0,
-             end_time=1, duration=1, turn_count=0, stored_word_count=7)
-    assert t.word_count == 7
+             end_time=1, duration=1, turn_count=0)
+    assert t.word_count == 3
+    assert t.token_count is None
 
 
-def test_word_count_from_pandas_float_is_an_int():
-    # pandas hands back numpy floats even when nothing is missing; callers
-    # index and format with this, so it has to come back as an int.
+def test_token_count_is_none_rather_than_nan():
+    """
+    The acoustics join goes through pandas, which spells a missing integer
+    float('nan'). NaN is not None, so an unguarded read returned it untouched
+    and every sum downstream came out NaN.
+    """
+    t = Turn(speaker=["SPEAKER_00"], text="one two three", start_time=0,
+             end_time=1, duration=1, turn_count=0,
+             stored_token_count=float("nan"))
+    assert t.token_count is None
+    assert t.word_count == 3
+
+
+def test_token_count_from_pandas_float_is_an_int():
+    # pandas hands back floats even when nothing is missing; callers index and
+    # format with this, so it has to come back as an int.
     t = Turn(speaker=["SPEAKER_00"], text="one two", start_time=0, end_time=1,
-             duration=1, turn_count=0, stored_word_count=5.0)
-    assert t.word_count == 5
-    assert isinstance(t.word_count, int)
+             duration=1, turn_count=0, stored_token_count=5.0)
+    assert t.token_count == 5
+    assert isinstance(t.token_count, int)
 
 
 def test_turn_zero_duration():

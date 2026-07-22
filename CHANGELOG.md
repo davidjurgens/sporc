@@ -49,24 +49,26 @@ still the way to tell a coverage gap from a genuinely turn-less episode.
 - `Turn.speakers_recomputed` says whether a turn's speaker labels came from the
   corrected matcher in dataset 1.1 or were carried over from 1.0 unchanged.
   Filter on it if your work needs a single consistent method.
-- `Turn.word_count` prefers the count the dataset carries and falls back to
-  splitting the text on whitespace when it does not.
+- **`Turn.word_count` counts words, and `Turn.token_count` is new.** The
+  dataset ships two columns called `word_count` that mean different things:
+  `turns/text.word_count` counts the timestamped tokens the transcript aligned
+  to the turn, punctuation included, while `turns/metrics.word_count` and
+  `episode_metrics.total_word_count` count whitespace-separated words. The
+  median ratio between them is 1.21.
 
-  **The two are not the same measure.** The dataset's count is the number of
-  aligned word tokens from diarization, which ran higher than a whitespace
-  split on 55% of turns and by as much as several dozen words. 18,336,086 turns
-  (9.9%, across 84,760 episodes) carry no count, because they were carried over
-  from 1.0 unchanged and the word lists that defined it no longer exist. Those
-  turns are exactly the ones with `speakers_recomputed = False` — the
-  correspondence is exact across all 185,303,765 rows — so filter on that field
-  if a consistent word count matters. Anything summing `word_count` over the
-  whole corpus is mixing two definitions.
-- Acoustic features gained standard deviations alongside the means:
-  `mfcc1_sma3_stdev` and the rest.
-- `Turn.word_count` no longer returns `NaN`. Joining the acoustic features on
-  goes through pandas, which represents a missing integer as `float('nan')`;
-  since NaN is not None the stored value was handed back untouched, and summing
-  word counts over an affected episode produced NaN rather than a number.
+  `Turn.word_count` is the words one. It is defined for every turn, and a
+  turn's count now adds up to the episode totals it belongs to. `token_count`
+  exposes the aligner's number, and is `None` for the 18,336,086 turns (9.9%,
+  across 84,760 episodes) carried over from dataset 1.0 — exactly those with
+  `speakers_recomputed = False`, a correspondence that holds across all
+  185,303,765 rows. Version 1.0 had no such column at all and the word lists it
+  came from are gone.
+
+- `Turn.token_count` returns `None` rather than `NaN` when absent. Joining the
+  acoustic features on goes through pandas, which represents a missing integer
+  as `float('nan')`; since NaN is not None the stored value was handed back
+  untouched, and summing over an affected episode produced NaN rather than a
+  number.
 - **A turn may now have an empty speaker list.** Where diarization produced no
   segments, the transcript arrives as one unattributed turn. Previously `Turn`
   rejected this and the backend discarded such rows, which would have made

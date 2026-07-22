@@ -62,9 +62,11 @@ class ParquetBackend:
     """
 
     def __init__(self, data_dir: str,
-                 source: Optional["DataSource"] = None) -> None:
+                 source: Optional["DataSource"] = None,
+                 load_audio_features: bool = True) -> None:
         start = time.time()
         self.data_dir = data_dir
+        self.load_audio_features = load_audio_features
         self._meta_dir = os.path.join(data_dir, "metadata")
         # Resolves per-podcast partitions. A HubDataSource fetches them on
         # demand; the default reads whatever is already on disk.
@@ -970,8 +972,13 @@ class ParquetBackend:
         if episode._turns_loaded:
             return
 
+        # Acoustics are their own tree, 14.5 GB across 140 parts, and joining
+        # them costs whole part files against the Hub. Most work never reads a
+        # single MFCC, so this is a switch rather than an assumption; it stays
+        # on by default because turn.mfcc1_sma3_mean silently becoming None
+        # would be a worse surprise than the bytes.
         turn_rows = self.get_turns_for_episode(
-            podcast_id, episode_id, include_audio=True
+            podcast_id, episode_id, include_audio=self.load_audio_features
         )
 
         turns = []
@@ -1024,7 +1031,7 @@ class ParquetBackend:
                     f1_frequency_sma3nz_stdev=row.get("f1_frequency_sma3nz_stdev"),
                     inferred_speaker_role=str(row.get("inferred_speaker_role", "")) or None,
                     inferred_speaker_name=str(row.get("inferred_speaker_name", "")) or None,
-                    stored_word_count=row.get("word_count"),
+                    stored_token_count=row.get("word_count"),
                     speakers_recomputed=row.get("speakers_recomputed"),
                     mp3_url=str(row.get("mp3_url", "")) or None,
                 )

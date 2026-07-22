@@ -3,8 +3,20 @@
 Build the subset the tutorial notebooks read.
 
 Downloads the metadata catalogs (~195 MB, once), selects the podcasts the
-tutorials need, fetches only those partitions, and runs make_subset.py over the
-result. The full corpus is never downloaded.
+tutorials need, reads their rows, and runs make_subset.py over the result.
+
+This is expensive against the Hub, and was not before dataset 1.1. Podcasts are
+packed into shared part files ordered by category, so fetching a set of
+podcasts costs whole parts rather than one small file each. The selection here
+is deliberately scattered across the corpus -- that is what makes it a teaching
+subset -- so it touches most parts: measured on 1.1, 1,000 podcasts drawn at
+random span 116 of the 127 turn parts, 11.6 GB, where 1,000 consecutive
+podcasts in one category span 2 parts and 0.19 GB. Scanning 6,000 podcasts for
+repeat guests reaches essentially every episodes part.
+
+Run it against a local copy (--data-dir) if you have one. The output subset is
+about 210 MB, and the notebooks read that, so this only needs running when the
+selection itself changes.
 
 Why the selection is hand-picked rather than random
 ---------------------------------------------------
@@ -106,16 +118,23 @@ def find_repeat_guest_podcasts(sporc, snap, want_guests, max_scan):
     pods = sorted(g[g.name_normalized.isin(cand)].podcast_id.unique())[:max_scan]
     logger.info("Scanning %d podcasts for guests with real speaker labels", len(pods))
 
-    src = sporc._parquet_backend._source
+    backend = sporc._parquet_backend
 
     def scan(pid):
+        # Reads one row group out of a shared part file. Before dataset 1.1 this
+        # built the path episodes/podcast_id=<id>/data.parquet by hand; against
+        # the packed layout that resolves to nothing, and the bare except below
+        # turned every miss into an empty result, so the scan found no guests at
+        # all and said so only by building a useless subset.
         try:
-            p = src.path(f"episodes/podcast_id={pid}/data.parquet")
-            if not p:
-                return pid, {}
-            df = _read(p, ["episode_id", "guest_speaker_labels"])
+            table = backend._read_tree(
+                "episodes", pid, columns=["episode_id", "guest_speaker_labels"])
+            if table is None:
+                return pid, set()
+            df = table.to_pandas()
         except Exception:
-            return pid, {}
+            logger.exception("Scan failed for podcast %s", pid)
+            return pid, set()
         found = set()
         for gl in df.guest_speaker_labels:
             if gl is None:
@@ -171,12 +190,25 @@ def main():
     p.add_argument("--max-scan", type=int, default=6000,
                    help="Cap on podcasts scanned for real repeat guests")
     p.add_argument("--seed", type=int, default=20200525)
+    p.add_argument("--data-dir", default=None,
+                   help="Local copy of the full Parquet layout to build from. "
+                        "Without it the podcasts come from the Hub, which for a "
+                        "selection this scattered means fetching most part "
+                        "files -- see the module docstring.")
     args = p.parse_args()
 
     from sporc import SPORCDataset
 
-    logger.info("Downloading metadata catalogs if needed (~195 MB)...")
-    sporc = SPORCDataset()
+    if args.data_dir:
+        logger.info("Reading from local layout %s", args.data_dir)
+        sporc = SPORCDataset(parquet_dir=args.data_dir)
+    else:
+        logger.info("Downloading metadata catalogs if needed (~195 MB)...")
+        logger.warning(
+            "Building from the Hub. The selection spans most part files, so "
+            "expect tens of GB of downloads; pass --data-dir to read a local "
+            "copy instead.")
+        sporc = SPORCDataset()
     snap = sporc._parquet_backend.data_dir
     logger.info("Snapshot: %s", snap)
 
@@ -220,9 +252,13 @@ def main():
             f.write(pid + "\n")
     logger.info("Wrote %s", ids_path)
 
-    logger.info("Prefetching partitions (this is the slow part)...")
-    res = sporc.prefetch({"podcast_ids": pods})
-    logger.info("Prefetched %d podcasts, %d files", res["podcasts"], res["files"])
+    if args.data_dir:
+        logger.info("Local layout, nothing to prefetch")
+    else:
+        logger.info("Prefetching partitions (this is the slow part)...")
+        res = sporc.prefetch({"podcast_ids": pods})
+        logger.info("Prefetched %d podcasts, %d files",
+                    res["podcasts"], res["files"])
 
     # 4. Cut the self-contained subset.
     cmd = [sys.executable, os.path.join(REPO, "scripts", "make_subset.py"),
