@@ -456,6 +456,18 @@ class TestUnknownSearchCriteriaAreRefused:
         with pytest.raises(TypeError, match="limit"):
             backend.search_episodes(limit=3)
 
+    def test_a_row_cap_guess_is_pointed_at_max_episodes(
+        self, tmp_parquet_layout
+    ):
+        # Refusing limit= is only half an answer: the criteria list does not
+        # contain a row cap, so the message has to name the one that is.
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        for wrong in ("limit", "n", "top_k", "count", "max_results",
+                      "num_episodes"):
+            with pytest.raises(TypeError, match="max_episodes"):
+                backend.search_episodes(**{wrong: 3})
+
     def test_supported_criteria_still_filter(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
 

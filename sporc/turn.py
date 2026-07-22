@@ -118,7 +118,7 @@ class Turn:
         ratio between the two across the corpus is 1.21. Use it when you want
         what the aligner saw; use word_count when you want words.
 
-        None for the 18,336,086 turns (9.9%) carried over from dataset 1.0,
+        None for the 18,250,545 turns (9.9%) carried over from dataset 1.0,
         which are exactly those with ``speakers_recomputed`` False. Version 1.0
         had no such column and the word lists it was derived from are gone.
         """

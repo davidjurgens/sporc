@@ -94,7 +94,8 @@ def audit(data_dir, do_search, load_audio):
     check("search_episodes(category)",
           lambda: ds.search_episodes(category=pod.primary_category))
     check("search_episodes_by_subcategory",
-          lambda: ds.search_episodes_by_subcategory("Technology", limit=3))
+          lambda: ds.search_episodes_by_subcategory("Technology",
+                                                    max_episodes=3))
     check("search_podcasts_by_subcategory",
           lambda: ds.search_podcasts_by_subcategory("Technology"))
     check("prefetch(local)", lambda: ds.prefetch([pod.podcast_id]))

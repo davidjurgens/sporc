@@ -674,9 +674,16 @@ class ParquetBackend:
         """
         unknown = set(criteria) - _EPISODE_CRITERIA
         if unknown:
-            raise TypeError(
-                f"search_episodes() got unsupported criteria "
-                f"{sorted(unknown)}; supported: {sorted(_EPISODE_CRITERIA)}")
+            msg = (f"search_episodes() got unsupported criteria "
+                   f"{sorted(unknown)}; supported: {sorted(_EPISODE_CRITERIA)}")
+            # The commonest wrong guess is a row cap, and naming only the
+            # filters would leave someone who passed limit= reading a list of
+            # thirteen keys none of which is the answer.
+            if unknown & {"limit", "n", "top_k", "count", "max_results",
+                          "num_episodes"}:
+                msg += (". To cap the number of episodes returned, "
+                        "use max_episodes=")
+            raise TypeError(msg)
 
         self._ensure_episode_df()
         df = self._episode_df

@@ -60,10 +60,10 @@ still the way to tell a coverage gap from a genuinely turn-less episode.
 
   `Turn.word_count` is the words one. It is defined for every turn, and a
   turn's count now adds up to the episode totals it belongs to. `token_count`
-  exposes the aligner's number, and is `None` for the 18,336,086 turns (9.9%,
+  exposes the aligner's number, and is `None` for the 18,250,545 turns (9.9%,
   across 84,760 episodes) carried over from dataset 1.0 — exactly those with
   `speakers_recomputed = False`, a correspondence that holds across all
-  185,303,765 rows. Version 1.0 had no such column at all and the word lists it
+  185,218,224 rows. Version 1.0 had no such column at all and the word lists it
   came from are gone.
 
 - `Turn.token_count` returns `None` rather than `NaN` when absent. Joining the
