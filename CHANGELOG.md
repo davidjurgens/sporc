@@ -11,7 +11,7 @@ dataset, and does not read the 1.0 layout.** If you need the old data, pin
 Version 1.0 gave every podcast its own directory, which came to roughly 685,000
 files. Downloading in bulk made hundreds of thousands of requests and ran into
 Hugging Face's rate limits, failing with HTTP 429 partway through. The data now
-sits in 545 files, with each podcast occupying exactly one row group and
+sits in 543 data files, with each podcast occupying exactly one row group and
 `metadata/shard_map.parquet` recording where.
 
 Reading one podcast still costs one request. Reading everything costs a few
@@ -37,8 +37,8 @@ will not fix itself. Requires `huggingface_hub>=1.2.0`.
 
 ### Turn coverage roughly doubled
 
-Dataset 1.1 merged in 358,497 episodes that had been diarized but never joined
-to the corpus, taking coverage from 372,604 episodes (33%) to 731,101 (65%).
+Dataset 1.1 merged in 358,509 episodes that had been diarized but never joined
+to the corpus, taking coverage from 372,604 episodes (33%) to 731,113 (65%).
 Speaker labels for the new episodes are anonymous — `SPEAKER_00` and the like —
 with no inferred names or roles, so name-based analyses see no benefit while
 turn-structure analyses see nearly twice the data. `Episode.has_turn_data` is
