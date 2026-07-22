@@ -22,7 +22,7 @@ turn-level acoustics and going back to the source audio for the rest.
 Each turn carries six summary numbers:
 """),
     ("code", "PREAMBLE"),
-    ("code", "DATA_CELL"),
+    ("code", "DATA_CELL_AUDIO"),
     ("code", '''\
 ep = next(e for e in sporc.iterate_episodes() if e.has_turn_data)
 turn = next(t for t in ep.turns if t.get_audio_features())

@@ -208,7 +208,7 @@ class SPORCDataset:
                  allow_downloads: bool = True,
                  include_search_db: bool = False,
                  include_turn_text: bool = False,
-                 load_audio_features: bool = True,
+                 load_audio_features: bool = False,
                  ignore_patterns: Optional[List[str]] = None):
         """
         Initialize the SPORC dataset.
@@ -231,13 +231,14 @@ class SPORCDataset:
                     with ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``
                     keys, or a path to a JSON or newline-delimited text file
                     holding either.
-            load_audio_features: Join acoustic features onto every turn
-                          (default). The acoustics are a separate 14.5 GB tree,
-                          and reading a podcast's turns pulls its acoustics part
-                          too, so set False if you never touch
-                          Turn.get_audio_features() -- it takes the tutorial
-                          subset's working set from 40 GB to 27 GB. Turn's
-                          audio fields are then all None.
+            load_audio_features: Join acoustic features onto every turn.
+                          Off by default: the acoustics are a separate 14.5 GB
+                          tree, and reading a podcast's turns would pull its
+                          acoustics part too even when nothing reads an MFCC --
+                          the difference between 27 GB and 40 GB of downloads
+                          for the tutorial workload. Until you set this True,
+                          Turn's audio fields are all None and
+                          get_audio_features() returns {}.
             allow_downloads: When False, never fetch anything beyond what is
                              already local; requests for absent data raise
                              ``DataNotLocalError``. Combine with ``subset`` to

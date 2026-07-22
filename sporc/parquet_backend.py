@@ -63,7 +63,7 @@ class ParquetBackend:
 
     def __init__(self, data_dir: str,
                  source: Optional["DataSource"] = None,
-                 load_audio_features: bool = True) -> None:
+                 load_audio_features: bool = False) -> None:
         start = time.time()
         self.data_dir = data_dir
         self.load_audio_features = load_audio_features
@@ -973,10 +973,11 @@ class ParquetBackend:
             return
 
         # Acoustics are their own tree, 14.5 GB across 140 parts, and joining
-        # them costs whole part files against the Hub. Most work never reads a
-        # single MFCC, so this is a switch rather than an assumption; it stays
-        # on by default because turn.mfcc1_sma3_mean silently becoming None
-        # would be a worse surprise than the bytes.
+        # them costs whole part files against the Hub -- reading turns used to
+        # drag that down whether or not anyone looked at an MFCC. Off by
+        # default: six of the eight tutorial notebooks never touch an audio
+        # feature, and this is the difference between 27 GB and 40 GB for their
+        # working set. Ask for them with load_audio_features=True.
         turn_rows = self.get_turns_for_episode(
             podcast_id, episode_id, include_audio=self.load_audio_features
         )

@@ -142,7 +142,18 @@ sporc = SPORCDataset(parquet_dir=SUBSET)
 print(sporc)
 '''
 
-_SHARED = {"PREAMBLE": PREAMBLE, "DATA_CELL": DATA_CELL}
+# Notebook 07 is the only one that reads an MFCC. Acoustics are a separate
+# 14.5 GB tree and are not loaded unless asked for, so it asks.
+DATA_CELL_AUDIO = DATA_CELL.replace(
+    "SPORCDataset(parquet_dir=SUBSET)",
+    "SPORCDataset(parquet_dir=SUBSET, load_audio_features=True)",
+).replace(
+    "print(sporc)",
+    "print(sporc)  # load_audio_features=True: this notebook needs the MFCCs",
+)
+
+_SHARED = {"PREAMBLE": PREAMBLE, "DATA_CELL": DATA_CELL,
+           "DATA_CELL_AUDIO": DATA_CELL_AUDIO}
 
 #: stem -> source module under src/
 NOTEBOOKS = {

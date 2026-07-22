@@ -75,6 +75,19 @@ still the way to tell a coverage gap from a genuinely turn-less episode.
   twelve episodes' text unreachable rather than merely unattributed. Code that
   assumes `turn.speaker[0]` exists needs a guard.
 
+### Acoustic features are no longer loaded unless you ask
+
+Reading a podcast's turns also read its acoustics, always. That is a separate
+14.5 GB tree of 140 part files, and in the packed layout a read costs a whole
+part, so anything touching `episode.turns` paid for MFCCs whether or not it
+looked at one. Six of the eight tutorial notebooks never read a single acoustic
+value.
+
+`Turn`'s audio fields are now `None` and `get_audio_features()` returns `{}`
+until you pass `load_audio_features=True` to `SPORCDataset`. For the tutorial
+workload that is the difference between 462 part files and 40 GB, and 346 and
+27 GB.
+
 ### Search
 
 The full-text index ships as two files. `metadata/turns_search.duckdb` (14 GB)

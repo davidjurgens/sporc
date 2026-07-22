@@ -346,10 +346,10 @@ class TestAudioFeaturesAreOptional:
     files for data most work never looks at.
     """
 
-    def test_turns_load_without_touching_the_acoustics_tree(
+    def test_the_default_does_not_touch_the_acoustics_tree(
         self, tmp_parquet_layout, count_tree_reads
     ):
-        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=False)
+        backend = ParquetBackend(tmp_parquet_layout)
 
         turns = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS)
         backend._load_turns_into_episode(
@@ -359,18 +359,17 @@ class TestAudioFeaturesAreOptional:
         assert turns, "turns must still load"
         assert not [p for p in count_tree_reads if "acoustics" in p]
 
-    def test_default_still_joins_the_audio_on(self, tmp_parquet_layout):
-        backend = ParquetBackend(tmp_parquet_layout)
+    def test_opting_in_joins_the_audio_on(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=True)
+        episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
 
-        rows = backend.get_turns_for_episode(PID_WITH_TURNS, EID_WITH_TURNS,
-                                             include_audio=True)
+        assert any(t.get_audio_features() for t in episode.turns), (
+            "load_audio_features=True must actually reach the acoustics tree")
 
-        assert any(r.get("mfcc1_sma3_mean") is not None for r in rows)
-
-    def test_disabled_leaves_audio_fields_empty_rather_than_wrong(
+    def test_audio_fields_are_empty_rather_than_wrong_when_not_loaded(
         self, tmp_parquet_layout
     ):
-        backend = ParquetBackend(tmp_parquet_layout, load_audio_features=False)
+        backend = ParquetBackend(tmp_parquet_layout)
         episode = backend.build_episode_object(PID_WITH_TURNS, EID_WITH_TURNS)
 
         # Absent, not zero: a caller averaging these must see nothing to average.
