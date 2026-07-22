@@ -348,6 +348,12 @@ class TestConcordance:
 
     def _setup_backend(self, backend, mock_duckdb_result, turn_texts):
         """Set up backend with DuckDB returning given turn texts."""
+        # KWIC matches on the text, which lives in the optional text database
+        # from 1.1 on. Both have to be present for the SQL path; with only the
+        # index, concordance falls back to scanning Parquet.
+        backend.has_search_db = lambda: True
+        backend._ensure_search_db = lambda: None
+        backend._has_text_db = True
         columns = [
             "episode_id", "podcast_id", "turn_text",
             "speaker_role", "speaker_name", "start_time", "end_time",
@@ -453,6 +459,49 @@ class TestConcordance:
             "speaker_name", "start_time", "end_time",
         }
         assert set(results[0].keys()) == expected_keys
+
+    def test_text_comes_from_the_attached_text_database(
+        self, mock_parquet_backend, mock_duckdb_result
+    ):
+        """
+        1.1 removed turn_text from turns_search.duckdb -- it nearly tripled the
+        file -- and moved it to the optional turns_text.duckdb. concordance kept
+        selecting it from `turns`, so every KWIC search against a 1.1 corpus
+        died with a binder error. The mocked connection accepted the dead SQL
+        happily, so only a real database caught it.
+        """
+        con = self._setup_backend(
+            mock_parquet_backend, mock_duckdb_result, ["hello world"]
+        )
+        mock_parquet_backend.concordance("hello")
+        sql = con.execute.call_args[0][0]
+
+        assert "txt.turn_text" in sql, "text must come from the attached db"
+        assert "FROM turns\n" not in sql, "turns no longer carries the text"
+
+    def test_without_the_text_database_it_scans_instead(
+        self, mock_parquet_backend
+    ):
+        """The index alone cannot answer KWIC: there is no text to match."""
+        mock_parquet_backend.has_search_db = lambda: True
+        mock_parquet_backend._ensure_search_db = lambda: None
+        mock_parquet_backend._has_text_db = False
+        mock_parquet_backend._warn_scanning = lambda n: None
+        mock_parquet_backend.local_turn_podcast_ids = lambda: ["pod1"]
+        scanned = []
+
+        def fake_scan(word, **kw):
+            scanned.append(word)
+            return [{"turn_text": "hello world", "episode_id": "ep1",
+                     "podcast_id": "pod1", "speaker_role": "host",
+                     "speaker_name": "John", "start_time": 0.0,
+                     "end_time": 1.0}]
+
+        mock_parquet_backend._scan_turns = fake_scan
+        results = mock_parquet_backend.concordance("hello")
+
+        assert scanned == ["hello"], "should fall back to the Parquet scan"
+        assert len(results) == 1
 
 
 # ===================================================================

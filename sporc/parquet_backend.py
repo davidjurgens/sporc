@@ -1641,10 +1641,23 @@ class ParquetBackend:
             episode_id, podcast_id, speaker_role, speaker_name,
             start_time, end_time.
 
-        Falls back to scanning local partitions when the full-text index is
-        absent; see :meth:`search_turns`.
+        Needs ``turns_text.duckdb``, not just the index: KWIC matches on the
+        text. Falls back to scanning local partitions when the text is not
+        queryable; see :meth:`search_turns`.
+
+        Note:
+            Substring matching cannot use the full-text index -- ``ILIKE`` has
+            to look at every row -- so an unfiltered call reads the whole
+            30 GB text database. Measured at about 110 seconds on the full
+            corpus. Pass ``podcast_id`` to bound it.
         """
-        if not self.has_search_db():
+        # KWIC matches on the text, which the index database stopped carrying in
+        # dataset 1.1 -- it lives in the optional turns_text.duckdb now. So this
+        # needs the text database, not merely the search one, and falls back to
+        # the Parquet scan whenever the text is not queryable.
+        if self.has_search_db():
+            self._ensure_search_db()
+        if not (self.has_search_db() and self._has_text_db):
             pods = [podcast_id] if podcast_id else self.local_turn_podcast_ids()
             self._warn_scanning(len(pods))
             row_dicts = self._scan_turns(
@@ -1652,25 +1665,29 @@ class ParquetBackend:
                 speaker_role=speaker_role,
             )[:limit]
         else:
-            self._ensure_search_db()
             con = self._search_db_con
 
-            where_clauses = ["turn_text ILIKE ?"]
+            where_clauses = ["x.turn_text ILIKE ?"]
             params = [f"%{word}%"]
 
             if speaker_role:
-                where_clauses.append("speaker_role = ?")
+                where_clauses.append("t.speaker_role = ?")
                 params.append(speaker_role)
             if podcast_id:
-                where_clauses.append("podcast_id = ?")
+                where_clauses.append("t.podcast_id = ?")
                 params.append(podcast_id)
 
             where_sql = " AND ".join(where_clauses)
 
+            # Driven from the text table, like search_turns' exact mode: the
+            # predicate is on the text, so matching first and picking the
+            # metadata up afterwards avoids scanning all 185M index rows.
             sql = f"""
-                SELECT episode_id, podcast_id, turn_text, speaker_role,
-                       speaker_name, start_time, end_time
-                FROM turns
+                SELECT t.episode_id, t.podcast_id, x.turn_text, t.speaker_role,
+                       t.speaker_name, t.start_time, t.end_time
+                FROM txt.turn_text x
+                JOIN turns t ON t.episode_id = x.episode_id
+                            AND t.turn_count = x.turn_count
                 WHERE {where_sql}
                 LIMIT ?
             """
