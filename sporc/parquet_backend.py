@@ -1648,8 +1648,9 @@ class ParquetBackend:
         Note:
             Substring matching cannot use the full-text index -- ``ILIKE`` has
             to look at every row -- so an unfiltered call reads the whole
-            30 GB text database. Measured at about 110 seconds on the full
-            corpus. Pass ``podcast_id`` to bound it.
+            30 GB text database: about 110 seconds on the full corpus cold,
+            considerably less once the file is in the page cache. Pass
+            ``podcast_id`` to bound it.
         """
         # KWIC matches on the text, which the index database stopped carrying in
         # dataset 1.1 -- it lives in the optional turns_text.duckdb now. So this
