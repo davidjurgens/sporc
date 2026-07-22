@@ -428,3 +428,42 @@ class TestMockBackendMirrorsInit:
         assert not missing, (
             f"mock_parquet_backend is missing {missing}; add them to the "
             f"fixture in conftest.py so it still stands in for a real backend")
+
+
+@pytest.mark.integration
+class TestUnknownSearchCriteriaAreRefused:
+    """
+    search_episodes(**criteria) dropped keys it did not recognise, so a typo or
+    an unsupported filter returned the whole catalog. On the full corpus that is
+    1.1 million episodes handed back as if they matched.
+    """
+
+    def test_a_typo_raises_rather_than_matching_everything(
+        self, tmp_parquet_layout
+    ):
+        backend = ParquetBackend(tmp_parquet_layout)
+        everything = len(backend.search_episodes())
+
+        with pytest.raises(TypeError, match="min_duraton"):
+            backend.search_episodes(min_duraton=60)
+
+        assert everything > 0, "fixture must have episodes for this to mean much"
+
+    def test_limit_is_not_a_criterion(self, tmp_parquet_layout):
+        # It reads like one, and silently returned every episode.
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        with pytest.raises(TypeError, match="limit"):
+            backend.search_episodes(limit=3)
+
+    def test_supported_criteria_still_filter(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        assert backend.search_episodes(min_duration=0)
+        assert backend.search_episodes(max_duration=0) == []
+
+    def test_the_error_names_what_is_supported(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        with pytest.raises(TypeError, match="min_duration"):
+            backend.search_episodes(nonsense=1)

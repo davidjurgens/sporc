@@ -46,6 +46,15 @@ _EPISODE_PARTITION_CACHE_SIZE = 8
 # the podcast being iterated.
 _TREE_CACHE_SIZE = 4
 
+# Everything search_episodes() knows how to filter on. Anything else is a
+# mistake on the caller's part and is refused rather than ignored.
+_EPISODE_CRITERIA = frozenset({
+    "min_duration", "max_duration", "min_speakers", "max_speakers",
+    "host_name", "guest_name", "category", "subcategory", "language",
+    "podcast_name", "podcast_id",
+    "min_overlap_prop_duration", "max_overlap_prop_duration",
+})
+
 
 class ParquetBackend:
     """
@@ -656,7 +665,19 @@ class ParquetBackend:
             host_name, guest_name, category, subcategory, language,
             podcast_name, podcast_id,
             min_overlap_prop_duration, max_overlap_prop_duration.
+
+        Raises:
+            TypeError: on a criterion that is not one of those. Unknown keys
+                used to be dropped, so a typo or an unsupported filter returned
+                the whole catalog -- a million episodes presented as a result
+                set rather than an error.
         """
+        unknown = set(criteria) - _EPISODE_CRITERIA
+        if unknown:
+            raise TypeError(
+                f"search_episodes() got unsupported criteria "
+                f"{sorted(unknown)}; supported: {sorted(_EPISODE_CRITERIA)}")
+
         self._ensure_episode_df()
         df = self._episode_df
 
