@@ -1,0 +1,148 @@
+"""
+Rebuild the full-text index in turns_search.duckdb.
+
+Renaming word_count to token_count needed the indexes off the table first,
+because DuckDB will not ALTER a table anything depends on. Dropping the
+full-text index was a mistake: that database has no turn_text column -- dropping
+it is what took it from 47 GB to 13.7 -- so create_fts_index had nothing to read
+and the index could not simply be put back.
+
+The text still exists, in turns_text.duckdb, keyed on (episode_id, turn_count).
+So: join it back on, build the index from it, drop the column again, and put the
+btree indexes back. The index tables survive the column being dropped -- that is
+how the original build worked -- so the end state is what it was, with the
+column renamed.
+
+Checkpointed by inspecting the database, so a failure part way can be rerun.
+"""
+
+import os
+import sys
+import time
+
+import duckdb
+
+BUILD = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.dirname(BUILD)
+DB = os.path.join(OUT, "metadata", "turns_search.duckdb")
+TEXT_DB = os.path.join(OUT, "metadata", "turns_text.duckdb")
+
+MEMORY_LIMIT = os.environ.get("SPORC_DUCKDB_MEMORY", "300GB")
+THREADS = int(os.environ.get("SPORC_WORKERS", "16"))
+EXPECTED_ROWS = 184_940_511
+
+INDEXES = [("idx_episode", "episode_id"), ("idx_podcast", "podcast_id"),
+           ("idx_role", "speaker_role")]
+
+
+def log(m):
+    print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def cols(con):
+    return [r[1] for r in con.execute("PRAGMA table_info('turns')").fetchall()]
+
+
+def has_fts(con):
+    return bool(con.execute(
+        "SELECT 1 FROM information_schema.schemata "
+        "WHERE schema_name = 'fts_main_turns'").fetchone())
+
+
+def main():
+    con = duckdb.connect(DB)
+    con.execute(f"SET memory_limit='{MEMORY_LIMIT}'")
+    con.execute(f"SET threads={THREADS}")
+    con.execute(f"SET temp_directory='{os.path.join(BUILD, 'duckdb_tmp')}'")
+    con.execute("INSTALL fts; LOAD fts")
+    t0 = time.time()
+    log(f"start: {os.path.getsize(DB)/2**30:.1f} GB, columns {cols(con)}")
+
+    # Indexes block both the join-in and the later column drop.
+    for name, _ in INDEXES:
+        con.execute(f"DROP INDEX IF EXISTS {name}")
+    log("btree indexes dropped")
+
+    # A run that died mid-join leaves this behind, and CREATE TABLE then fails
+    # on the retry rather than resuming.
+    con.execute("DROP TABLE IF EXISTS turns_rebuilt")
+
+    if "turn_text" not in cols(con):
+        log("joining turn_text back on from turns_text.duckdb...")
+        t = time.time()
+        con.execute(f"ATTACH '{TEXT_DB}' AS txt (READ_ONLY)")
+        # Collapse the text side to one row per key first. (episode_id,
+        # turn_count) is not unique: 1,337 episodes carry turns duplicated
+        # verbatim, inherited from version 1.0 -- and a plain join multiplies
+        # those, 4 copies against 4 giving 16. That is what the row-count guard
+        # below caught on the first attempt.
+        con.execute("""
+            CREATE TABLE turns_rebuilt AS
+            SELECT s.*, x.turn_text
+            FROM turns s
+            JOIN (SELECT episode_id, turn_count, min(turn_text) AS turn_text
+                  FROM txt.turn_text GROUP BY 1, 2) x
+            USING (episode_id, turn_count)
+        """)
+        n = con.execute("SELECT COUNT(*) FROM turns_rebuilt").fetchone()[0]
+        log(f"joined {n:,} rows in {(time.time()-t)/60:.1f}m")
+        if n != EXPECTED_ROWS:
+            raise SystemExit(
+                f"join produced {n:,} rows, expected {EXPECTED_ROWS:,}; "
+                "the two databases disagree and the index would be wrong")
+        con.execute("DROP TABLE turns")
+        con.execute("ALTER TABLE turns_rebuilt RENAME TO turns")
+        con.execute("DETACH txt")
+        log(f"columns now {cols(con)}")
+
+    if not has_fts(con):
+        log("building full-text index (the long one)...")
+        t = time.time()
+        con.execute("PRAGMA create_fts_index('turns', 'row_id', 'turn_text', "
+                    "overwrite=1)")
+        log(f"fts built in {(time.time()-t)/60:.1f}m")
+
+    if "turn_text" in cols(con):
+        log("dropping turn_text again...")
+        con.execute("ALTER TABLE turns DROP COLUMN turn_text")
+        log(f"columns now {cols(con)}")
+
+    for name, col in INDEXES:
+        t = time.time()
+        con.execute(f"CREATE INDEX IF NOT EXISTS {name} ON turns({col})")
+        log(f"{name} rebuilt in {(time.time()-t)/60:.1f}m")
+    con.close()
+
+    size = os.path.getsize(DB) / 2**30
+    log(f"before compaction: {size:.1f} GB")
+    tmp = DB + ".compact"
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    t = time.time()
+    src = duckdb.connect(DB, read_only=True)
+    src.execute(f"ATTACH '{tmp}' AS compacted")
+    src.execute("COPY FROM DATABASE turns_search TO compacted")
+    src.close()
+    os.replace(tmp, DB)
+    log(f"compacted to {os.path.getsize(DB)/2**30:.1f} GB in "
+        f"{(time.time()-t)/60:.1f}m")
+
+    con = duckdb.connect(DB, read_only=True)
+    con.execute("LOAD fts")
+    n = con.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+    hits = con.execute("""
+        SELECT episode_id, turn_count,
+               fts_main_turns.match_bm25(row_id, 'climate change') AS score
+        FROM turns WHERE score IS NOT NULL ORDER BY score DESC LIMIT 3
+    """).fetchall()
+    log(f"verify: {n:,} rows, columns {cols(con)}")
+    log(f"verify: top hits {hits}")
+    con.close()
+    if n != EXPECTED_ROWS or not hits:
+        raise SystemExit("verification failed")
+    log(f"done in {(time.time()-t0)/60:.1f}m")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
