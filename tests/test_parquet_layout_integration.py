@@ -479,3 +479,119 @@ class TestUnknownSearchCriteriaAreRefused:
 
         with pytest.raises(TypeError, match="min_duration"):
             backend.search_episodes(nonsense=1)
+
+
+@pytest.mark.integration
+class TestProjectionAvoidsWholePartFetch:
+    """
+    A column-projected read of a part not yet on disk should range-read just
+    the podcast's row group, rather than fetching the whole part with path().
+    On the Hub that is the difference between a few hundred KB and ~100 MB per
+    probe; here we assert the dispatch, and that it returns identical data.
+    """
+
+    def test_projection_on_absent_part_uses_row_group_read(
+            self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        source = backend._source
+
+        # Pretend nothing is on disk, so _read_tree takes the range-read branch,
+        # and record what it reaches for. The base LocalDataSource serves
+        # read_row_group_columns from the real file, so the data is still real.
+        calls = {"path": [], "rowgroup": []}
+        real_path = source.path
+        real_rgc = source.read_row_group_columns
+
+        def spy_path(rel):
+            calls["path"].append(rel)
+            return real_path(rel)
+
+        def spy_rgc(rel, rg, cols):
+            calls["rowgroup"].append((rel, rg, tuple(cols)))
+            return real_rgc(rel, rg, cols)
+
+        source.exists_locally = lambda rel: False
+        source.path = spy_path
+        source.read_row_group_columns = spy_rgc
+
+        ids = backend._episode_ids_with_turns(PID_WITH_TURNS)
+
+        assert ids == frozenset([EID_WITH_TURNS])
+        # The probe dispatched to the row-group projection read for the turns
+        # part. (Whether that read avoids the whole-part fetch is a Hub property
+        # -- LocalDataSource resolves it through path() either way -- so it is
+        # asserted separately against a HubDataSource below.)
+        assert any("turns" in rel for rel, _, _ in calls["rowgroup"]), \
+            "expected a row-group projection read of the turns part"
+
+    def test_projection_matches_a_full_read(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        source = backend._source
+        loc = backend.shard_map.locate("turns_text", PID_WITH_TURNS)
+        rel = backend.shard_map.relpath("turns_text", loc.part)
+
+        projected = source.read_row_group_columns(
+            rel, loc.row_group, ["episode_id"])
+        full = pq.ParquetFile(source.path(rel)).read_row_group(
+            loc.row_group, columns=["episode_id"])
+
+        assert projected.column("episode_id").to_pylist() == \
+            full.column("episode_id").to_pylist()
+
+    def test_full_read_still_fetches_and_caches_the_part(
+            self, tmp_parquet_layout):
+        """A columns=None read keeps the whole-part path -- clustered access
+        depends on the part being on disk and cached, not range-read."""
+        backend = ParquetBackend(tmp_parquet_layout)
+        source = backend._source
+
+        fetched = []
+        real_path = source.path
+        source.path = lambda rel: (fetched.append(rel), real_path(rel))[1]
+
+        first = backend._read_tree("turns_text", PID_WITH_TURNS)
+        assert first is not None and first.num_rows > 0
+        assert fetched, "full read should resolve the part via path()"
+
+        # Second full read of the same podcast is served from the tree cache.
+        fetched.clear()
+        again = backend._read_tree("turns_text", PID_WITH_TURNS)
+        assert again is first
+        assert fetched == [], "cached full read should not touch the source"
+
+    def test_hub_projection_range_reads_and_skips_path(self, tmp_parquet_layout):
+        """On a HubDataSource, a projected read of an absent part opens the file
+        through the range-capable filesystem and never calls hf_hub_download."""
+        from sporc.source import HubDataSource
+
+        backend = ParquetBackend(tmp_parquet_layout)
+        loc = backend.shard_map.locate("turns_text", PID_WITH_TURNS)
+        rel = backend.shard_map.relpath("turns_text", loc.part)
+        real_part = os.path.join(tmp_parquet_layout, rel)
+
+        # A Hub source whose snapshot root is empty, so the part is "absent" and
+        # the range branch is taken. Its filesystem is faked to open the real
+        # fixture file, and any whole-file download is made to fail loudly.
+        empty_root = os.path.join(tmp_parquet_layout, "empty_snapshot")
+        os.makedirs(empty_root, exist_ok=True)
+        source = HubDataSource("blitt/SPoRC", empty_root, allow_downloads=True)
+
+        opened = []
+
+        class FakeFS:
+            def open(self, path, mode="rb"):
+                opened.append(path)
+                return open(real_part, mode)
+
+        source._fs = FakeFS()
+        source._download_with_retry = lambda *a, **k: pytest.fail(
+            "range read must not fall back to a whole-file download")
+
+        table = source.read_row_group_columns(rel, loc.row_group, ["episode_id"])
+
+        assert opened == [f"datasets/blitt/SPoRC/{rel}"]
+        assert source.fetch_count == 1
+        expected = pq.ParquetFile(real_part).read_row_group(
+            loc.row_group, columns=["episode_id"])
+        assert table.column("episode_id").to_pylist() == \
+            expected.column("episode_id").to_pylist()

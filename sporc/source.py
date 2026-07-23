@@ -53,6 +53,43 @@ class DataSource:
         """Whether *relpath* is already on disk, without fetching anything."""
         return os.path.exists(os.path.join(self.root, relpath))
 
+    def read_columns(self, relpath: str, columns):
+        """
+        Read *columns* from every row group of the Parquet file at *relpath*.
+
+        The default resolves the whole file with :meth:`path` and then projects,
+        which is right when the file is already local. :class:`HubDataSource`
+        overrides it to range-read only the columns asked for, so a
+        column-projected scan of the corpus does not pull every part in full.
+
+        Returns None if the file does not exist in the dataset.
+        """
+        return self._read_projected(
+            relpath, lambda pf: pf.read(columns=columns))
+
+    def read_row_group_columns(self, relpath: str, row_group: int, columns):
+        """
+        Read *columns* from a single *row_group* of the file at *relpath*.
+
+        One podcast is one row group, so this is how a projected per-podcast
+        probe -- "which of this podcast's episodes have turns" -- avoids paying
+        for the whole part it lives in. As with :meth:`read_columns`, the Hub
+        source range-reads rather than downloading the part.
+
+        Returns None if the file does not exist in the dataset.
+        """
+        return self._read_projected(
+            relpath, lambda pf: pf.read_row_group(row_group, columns=columns))
+
+    def _read_projected(self, relpath: str, reader):
+        """Apply *reader* to a ParquetFile for *relpath*, or None if absent."""
+        import pyarrow.parquet as pq
+
+        p = self.path(relpath)
+        if p is None:
+            return None
+        return reader(pq.ParquetFile(p))
+
     @contextmanager
     def downloads_enabled(self):
         """
@@ -151,8 +188,21 @@ class HubDataSource(DataSource):
         return p
 
     def _download_with_retry(self, hf_hub_download, relpath: str) -> str:
+        """Fetch one whole file, waiting out the Hub's rate limit."""
+        return self._retry_on_rate_limit(
+            lambda: hf_hub_download(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                filename=relpath,
+                token=self.token,
+                cache_dir=self.cache_dir,
+            ),
+            relpath,
+        )
+
+    def _retry_on_rate_limit(self, call, relpath: str):
         """
-        Fetch one file, waiting out the Hub's rate limit rather than failing.
+        Run *call*, waiting out the Hub's rate limit rather than failing.
 
         The Hub counts requests in fixed five-minute windows and answers 429
         once a window is spent. That is a wait, not an error: the window always
@@ -167,13 +217,7 @@ class HubDataSource(DataSource):
 
         for attempt in range(_MAX_RETRIES):
             try:
-                return hf_hub_download(
-                    repo_id=self.repo_id,
-                    repo_type="dataset",
-                    filename=relpath,
-                    token=self.token,
-                    cache_dir=self.cache_dir,
-                )
+                return call()
             except HfHubHTTPError as exc:
                 status = getattr(getattr(exc, "response", None), "status_code",
                                  None)
@@ -195,6 +239,67 @@ class HubDataSource(DataSource):
                 )
                 time.sleep(delay)
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _filesystem(self):
+        """A cached HfFileSystem for range reads against this repo."""
+        fs = getattr(self, "_fs", None)
+        if fs is None:
+            from huggingface_hub import HfFileSystem
+            fs = HfFileSystem(token=self.token)
+            self._fs = fs
+        return fs
+
+    def _read_projected(self, relpath: str, reader):
+        """
+        Range-read a projection from *relpath* without materializing the file.
+
+        A column-projected read otherwise pays for whole part files: ``path()``
+        fetches the entire object and the projection then discards ~99% of it.
+        Reading through :class:`HfFileSystem` lets Parquet fetch just the footer
+        and the requested column chunks over HTTP range requests, so a whole-
+        corpus scan costs a few small reads per part rather than tens of
+        megabytes, and a per-podcast probe costs one row group rather than the
+        part it sits in.
+
+        A file already on disk is read locally -- there is nothing to range over
+        and the whole object is present. Unlike ``path()``, a range read does
+        not persist the file to the snapshot cache, which is the point: a probe
+        should not leave whole parts behind that nothing else asked for.
+        """
+        if relpath in self._absent:
+            return None
+
+        import pyarrow.parquet as pq
+
+        local = os.path.join(self.root, relpath)
+        if os.path.exists(local):
+            return reader(pq.ParquetFile(local))
+
+        if not self.allow_downloads:
+            raise DataNotLocalError(
+                f"{relpath} is not present locally and downloads are disabled "
+                "(allow_downloads=False)."
+            )
+
+        from huggingface_hub.errors import EntryNotFoundError
+
+        fs = self._filesystem()
+        hub_path = f"datasets/{self.repo_id}/{relpath}"
+
+        def _read():
+            try:
+                with fs.open(hub_path, "rb") as fh:
+                    return reader(pq.ParquetFile(fh))
+            except FileNotFoundError:
+                raise EntryNotFoundError(f"{relpath} not found in repo")
+
+        try:
+            table = self._retry_on_rate_limit(_read, relpath)
+        except EntryNotFoundError:
+            self._absent.add(relpath)
+            return None
+        self._fetched += 1
+        return table
 
     def __repr__(self) -> str:
         return (f"HubDataSource({self.repo_id!r}, fetched={self._fetched}, "

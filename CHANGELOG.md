@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.1
+
+Column-projected reads against the Hub no longer download whole part files.
+
+A part file is tens to ~144 MB and holds many podcasts. Reading only a couple
+of columns from one still fetched the entire object and then discarded ~99% of
+it, because `path()` downloads a whole file and the column projection ran after.
+Two access patterns paid for this:
+
+- Building the tutorial subset scans `guest_speaker_labels` across every episode
+  part to find diarized guests -- two columns out of ~140 parts, which came to
+  ~15 GB downloaded to read well under 100 MB.
+- Per-podcast turn probes (`episode_has_turn_data`) read a single column of one
+  row group but pulled the whole turns part it lived in, ~100 MB per uncached
+  podcast.
+
+Both now range-read over `HfFileSystem`, so Parquet fetches just the footer and
+the requested column chunks. `DataSource` gains `read_columns` (all row groups)
+and `read_row_group_columns` (one podcast's row group); the Hub source serves
+them with HTTP range requests and keeps the existing 429 backoff.
+
+Whole-object reads are unchanged. A full read of a podcast still fetches its part
+in full and caches it, so category-ordered iteration -- where neighbours share a
+file -- stays cheap. Only column-projected reads of a part not already on disk
+take the range path, and a range read does not persist the part to the cache,
+so a probe leaves nothing behind for a later reader to trip over.
+
 ## 1.1.0
 
 Supports SPoRC dataset version 1.1. **This release is required for that

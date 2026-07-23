@@ -433,17 +433,18 @@ class ParquetBackend:
         Read one podcast's rows from *tree*, or None if it has none there.
 
         Each podcast occupies exactly one row group, so this reads that group
-        rather than the whole part file. The part itself is fetched in full on
-        first touch and stays in the local cache, which means the next podcast
-        in the same file costs nothing -- and neighbouring podcasts share a file
-        because the parts are ordered by category.
+        rather than the whole part file. A full read fetches the part in full on
+        first touch and it stays in the local cache, which means the next
+        podcast in the same file costs nothing -- and neighbouring podcasts
+        share a file because the parts are ordered by category. A column-
+        projected read of a part not yet on disk instead range-reads just this
+        podcast's row group, so a per-podcast probe does not download the whole
+        part to keep one group's worth of one column.
         """
         loc = self.shard_map.locate(tree, podcast_id)
         if loc is None:
             return None
-        path = self._source.path(self.shard_map.relpath(tree, loc.part))
-        if path is None:
-            return None
+        rel = self.shard_map.relpath(tree, loc.part)
 
         # Cached on the full row group, so a request for a subset of columns
         # neither reads from nor writes to the cache. Serving a projection from
@@ -462,8 +463,23 @@ class ParquetBackend:
                 self._tree_cache.move_to_end(key)
                 return hit
 
-        table = pq.ParquetFile(path).read_row_group(loc.row_group,
-                                                    columns=columns)
+        # Only projections range-read, and only when the part isn't already
+        # local: a full read still wants the whole part on disk and cached, and
+        # a projection of a part we already hold is free to read locally. This
+        # is the non-cacheable branch, so declining to persist the file costs a
+        # later reader nothing it would have kept.
+        if columns is not None and not self._source.exists_locally(rel):
+            table = self._source.read_row_group_columns(
+                rel, loc.row_group, columns)
+        else:
+            path = self._source.path(rel)
+            if path is None:
+                return None
+            table = pq.ParquetFile(path).read_row_group(loc.row_group,
+                                                        columns=columns)
+        if table is None:
+            return None
+
         if cacheable:
             self._tree_cache[key] = table
             while len(self._tree_cache) > _TREE_CACHE_SIZE:

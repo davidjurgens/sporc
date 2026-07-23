@@ -170,11 +170,15 @@ def diarized_guest_index(backend, smap):
     parts = sorted({loc[0] for _, loc in smap.items("episodes")})
     logger.info("Indexing diarized guests across %d episode parts", len(parts))
     for i, part in enumerate(parts, 1):
-        path = backend._source.path(smap.relpath("episodes", part))
-        if path is None:
-            continue
-        t = pq.ParquetFile(path).read(
+        # Two columns out of a ~110 MB part, across every part in the corpus.
+        # read_columns range-reads just those column chunks over HTTP rather
+        # than downloading each part in full only to discard ~99% of it, which
+        # on the Hub is the difference between ~100 MB and ~15 GB for this scan.
+        t = backend._source.read_columns(
+            smap.relpath("episodes", part),
             columns=["podcast_id", "guest_speaker_labels"])
+        if t is None:
+            continue
         for pid, gl in zip(t.column("podcast_id").to_pylist(),
                            t.column("guest_speaker_labels").to_pylist()):
             if not gl or gl in ("{}", "SPEAKER_DATA_UNAVAILABLE"):
