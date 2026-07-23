@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.1.2
+
+Host lookups are answered from small metadata indexes, and the host/guest
+episode filters actually work.
+
+The dataset now ships `metadata/host_index.parquet` (host name -> podcast,
+249,196 rows) and `metadata/host_episode_index.parquet` (host name -> episode,
+535,337 rows), both built from the catalogs. The default metadata download
+fetches them alongside the other catalogs, so `get_podcasts_by_host()` and
+`search_by_host()` work out of the box -- and under `allow_downloads=False`.
+Before this, nothing downloaded the files and every call raised
+`IndexNotBuiltError` against a fresh Hub-backed dataset.
+
+`search_episodes(host_name=...)` and `search_episodes(guest_name=...)` are now
+answered through those indexes (guest names through the `guest` rows of
+`speaker_name_index.parquet`) rather than by scanning every episode's predicted
+name list in Python. When the indexes are absent -- an older dataset build --
+both fall back to the row scan.
+
+That row scan had a latent bug: it tested each cell with `isinstance(names,
+list)`, but `to_pandas()` returns the predicted-name columns as numpy arrays, so
+the test never matched and both filters silently returned nothing. The fallback
+now accepts any non-string iterable, so `host_name`/`guest_name` search returns
+results whether or not the new indexes are present.
+
+The `guest_name` filter carries the same mention-vs-appearance caveat as
+`search_by_speaker_name(role="guest")`: predicted guest names include people who
+were only discussed. Host names carry no such artefact.
+
 ## 1.1.1
 
 Column-projected reads against the Hub no longer download whole part files.

@@ -94,13 +94,34 @@ def tmp_parquet_layout(tmp_path):
         "hostname": ["a.example.com", "b.example.com"],
         "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS],
     }), meta / "hostname_index.parquet")
+    # Every episode carries host_predicted_names=["Ira Glass"] and
+    # guest_predicted_names=["A Guest"] (see _episode_columns), so a faithful
+    # episode-grained index has a row per episode -- the search_episodes()
+    # host_name/guest_name filters route through these, and an index that
+    # disagreed with the catalog would let a routing bug pass unnoticed.
+    ep_ids = [EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS]
+    ep_pids = [PID_WITH_TURNS, PID_WITH_TURNS, PID_NO_TURNS]
     pq.write_table(pa.table({
-        "name_normalized": ["ira glass"],
-        "name_original": ["Ira Glass"],
-        "role": ["host"],
-        "episode_id": [EID_WITH_TURNS],
-        "podcast_id": [PID_WITH_TURNS],
+        "name_normalized": ["ira glass"] * 3 + ["a guest"] * 3,
+        "name_original": ["Ira Glass"] * 3 + ["A Guest"] * 3,
+        "role": ["host"] * 3 + ["guest"] * 3,
+        "episode_id": ep_ids * 2,
+        "podcast_id": ep_pids * 2,
     }), meta / "speaker_name_index.parquet")
+    # Podcast-grained hosts come from podcast_catalog.host_names, which is a
+    # different source: PID_NO_TURNS is hosted by "Someone" there even though
+    # its episode predicts "Ira Glass".
+    pq.write_table(pa.table({
+        "name_normalized": ["ira glass", "someone"],
+        "name_original": ["Ira Glass", "Someone"],
+        "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS],
+    }), meta / "host_index.parquet")
+    pq.write_table(pa.table({
+        "name_normalized": ["ira glass"] * 3,
+        "name_original": ["Ira Glass"] * 3,
+        "podcast_id": ep_pids,
+        "episode_id": ep_ids,
+    }), meta / "host_episode_index.parquet")
 
     # From dataset 1.1 the trees are packed: many podcasts per part file, one
     # row group each, located through metadata/shard_map.parquet. The fixture

@@ -144,9 +144,17 @@ class SPORCDataset:
 
     # Built by scripts/build_indexes.py. Absent from older revisions of the
     # dataset, in which case the features that need them raise on use.
+    #
+    # The host indexes are small (~14 MB together) and answer host lookups
+    # straight from the catalog metadata, so fetching them here means
+    # get_podcasts_by_host()/search_by_host() work out of the box -- and
+    # offline, under allow_downloads=False -- instead of each call reaching back
+    # to the Hub for a file that was never downloaded.
     _OPTIONAL_METADATA = [
         "metadata/speaker_name_index.parquet",
         "metadata/episode_metrics.parquet",
+        "metadata/host_index.parquet",
+        "metadata/host_episode_index.parquet",
     ]
 
     @classmethod
@@ -748,6 +756,33 @@ class SPORCDataset:
         """
         return self._parquet_backend.search_by_speaker_name(
             name, role=role, exact=exact, limit=limit,
+        )
+
+    def get_podcasts_by_host(self, name: str, *,
+                             exact: bool = False) -> List[str]:
+        """
+        Podcast ids hosted by *name*, from the shipped host index.
+
+        Answered from ``metadata/host_index.parquet`` alone (no part-file
+        downloads). ``exact`` requires a full case-insensitive match; otherwise
+        a substring matches.
+        """
+        return self._parquet_backend.get_podcasts_by_host(name, exact=exact)
+
+    def search_by_host(self, name: str, *, exact: bool = False,
+                       limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Find episodes hosted by *name*, from the shipped host episode index.
+
+        Covers hosts only, so it avoids the guest-mention artefact that
+        :meth:`search_by_speaker_name` warns about. Answered from
+        ``metadata/host_episode_index.parquet`` alone.
+
+        Returns:
+            List of dicts with episode_id, podcast_id, name_original.
+        """
+        return self._parquet_backend.search_by_host(
+            name, exact=exact, limit=limit,
         )
 
     def concordance(self, word: str, *, context_words: int = 10,

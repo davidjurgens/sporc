@@ -167,12 +167,92 @@ def copy_unchanged():
             print(f"copied {name}", flush=True)
 
 
+def _explode_names(rows):
+    """Yield (normalized, original) for a list of raw host names, deduped."""
+    seen = set()
+    for name in rows or []:
+        if name is None:
+            continue
+        s = str(name).strip()
+        low = s.lower()
+        if not s or low in seen:
+            continue
+        seen.add(low)
+        yield low, s
+
+
+def build_host_indexes():
+    """
+    Host-name lookups, at two grains, built from the catalogs alone.
+
+    ``host_index.parquet`` is podcast-grained -- (host name -> podcast) exploded
+    from ``podcast_catalog.host_names`` -- so a client can answer "which shows
+    does this person host" from the ~195 MB metadata without touching a part
+    file. ``host_episode_index.parquet`` carries the same names down to the
+    episode via ``episode_catalog.host_predicted_names``.
+
+    Neither is affected by the diarization rebuild: host names come from the
+    episode/podcast catalogs, not the turn labels (same reasoning as
+    copy_unchanged's note on speaker_name_index). Reading the rebuilt
+    episode_catalog here is safe because the rebuild leaves host_predicted_names
+    untouched. This is the host half of speaker_name_index without the predicted
+    -guest rows, whose names are mentions rather than appearances.
+    """
+    pc = pq.ParquetFile(
+        f"{OUT}/metadata/podcast_catalog.parquet").read(
+        columns=["podcast_id", "host_names"])
+    p_norm, p_orig, p_pid = [], [], []
+    for pid, hosts in zip(pc.column("podcast_id").to_pylist(),
+                          pc.column("host_names").to_pylist()):
+        for low, orig in _explode_names(hosts):
+            p_norm.append(low)
+            p_orig.append(orig)
+            p_pid.append(pid)
+    pq.write_table(
+        pa.table({
+            "name_normalized": pa.array(p_norm, type=pa.string()),
+            "name_original": pa.array(p_orig, type=pa.string()),
+            "podcast_id": pa.array(p_pid, type=pa.string()),
+        }),
+        f"{OUT}/metadata/host_index.parquet", compression="zstd")
+    print(f"host_index: {len(p_norm):,} rows "
+          f"({len(set(p_norm)):,} distinct hosts)", flush=True)
+
+    ec = pq.ParquetFile(
+        f"{OUT}/metadata/episode_catalog.parquet").read(
+        columns=["episode_id", "podcast_id", "host_predicted_names"])
+    e_norm, e_orig, e_pid, e_eid = [], [], [], []
+    for eid, pid, hosts in zip(ec.column("episode_id").to_pylist(),
+                               ec.column("podcast_id").to_pylist(),
+                               ec.column("host_predicted_names").to_pylist()):
+        for low, orig in _explode_names(hosts):
+            e_norm.append(low)
+            e_orig.append(orig)
+            e_pid.append(pid)
+            e_eid.append(eid)
+    pq.write_table(
+        pa.table({
+            "name_normalized": pa.array(e_norm, type=pa.string()),
+            "name_original": pa.array(e_orig, type=pa.string()),
+            "podcast_id": pa.array(e_pid, type=pa.string()),
+            "episode_id": pa.array(e_eid, type=pa.string()),
+        }),
+        f"{OUT}/metadata/host_episode_index.parquet", compression="zstd")
+    print(f"host_episode_index: {len(e_norm):,} rows", flush=True)
+
+
 def main():
     os.makedirs(f"{OUT}/metadata", exist_ok=True)
+    if "--host-only" in sys.argv:
+        # Rebuild just the host indexes against the finished catalogs, without
+        # re-running the turn-stats pass.
+        build_host_indexes()
+        return 0
     copy_unchanged()
     stats = turn_stats()
     print(f"episodes with turns: {len(stats):,}", flush=True)
     rebuild_episode_catalog(stats)
+    build_host_indexes()
     return 0
 
 

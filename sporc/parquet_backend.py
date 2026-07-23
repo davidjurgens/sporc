@@ -100,6 +100,8 @@ class ParquetBackend:
 
         # Lazy-loaded indexes for search / metrics
         self._speaker_index_df = None
+        self._host_index_df = None
+        self._host_episode_index_df = None
         self._episode_metrics_df = None
         self._search_db_con = None
         # Whether the optional turn-text database is attached alongside the
@@ -747,31 +749,84 @@ class ParquetBackend:
             else:
                 df = df.iloc[0:0]
         if "host_name" in criteria:
-            import numpy as np
-            hname = criteria["host_name"].lower()
-            names_col = df["host_predicted_names"].values
-            mask = np.array([
-                any(hname in str(n).lower() for n in names)
-                if isinstance(names, list) else False
-                for names in names_col
-            ])
-            df = df[mask]
+            df = self._filter_episodes_by_host_name(df, criteria["host_name"])
         if "guest_name" in criteria:
-            import numpy as np
-            gname = criteria["guest_name"].lower()
-            names_col = df["guest_predicted_names"].values
-            mask = np.array([
-                any(gname in str(n).lower() for n in names)
-                if isinstance(names, list) else False
-                for names in names_col
-            ])
-            df = df[mask]
+            df = self._filter_episodes_by_guest_name(df, criteria["guest_name"])
         if "min_overlap_prop_duration" in criteria:
             df = df[df["overlap_prop_duration"] >= criteria["min_overlap_prop_duration"]]
         if "max_overlap_prop_duration" in criteria:
             df = df[df["overlap_prop_duration"] <= criteria["max_overlap_prop_duration"]]
 
         return df.to_dict(orient="records")
+
+    def _filter_episodes_by_host_name(self, df, host_name):
+        """
+        Keep the episodes in *df* whose predicted host names include *host_name*.
+
+        Answered through ``host_episode_index.parquet``, which is built from the
+        same ``host_predicted_names`` this used to scan row by row: matching a
+        substring against the index's ~535k name rows and taking the episode ids
+        replaces a Python loop over every one of the ~1.1M episodes' name lists.
+        Falls back to the row scan when the index is absent (older dataset).
+        """
+        try:
+            self._ensure_host_episode_index()
+        except IndexNotBuiltError:
+            return self._filter_episodes_by_name_scan(
+                df, "host_predicted_names", host_name)
+        ids = self._index_episode_ids(self._host_episode_index_df, host_name)
+        return df[df["episode_id"].isin(ids)]
+
+    def _filter_episodes_by_guest_name(self, df, guest_name):
+        """
+        Keep the episodes in *df* whose predicted guest names include *guest_name*.
+
+        Uses the ``guest`` rows of ``speaker_name_index.parquet`` -- the same
+        ``guest_predicted_names`` the row scan read -- so the result set is
+        unchanged and the mention artefact documented on
+        :meth:`search_by_speaker_name` applies here too. Falls back to the row
+        scan when the index is absent.
+        """
+        try:
+            self._ensure_speaker_index()
+        except IndexNotBuiltError:
+            return self._filter_episodes_by_name_scan(
+                df, "guest_predicted_names", guest_name)
+        ids = self._index_episode_ids(
+            self._speaker_index_df, guest_name, role="guest")
+        return df[df["episode_id"].isin(ids)]
+
+    @staticmethod
+    def _index_episode_ids(index_df, name, *, role=None):
+        """Episode ids in *index_df* whose normalized name contains *name*."""
+        key = name.lower().strip()
+        mask = index_df["name_normalized"].str.contains(
+            key, na=False, regex=False)
+        if role is not None:
+            mask = mask & (index_df["role"] == role)
+        return set(index_df.loc[mask, "episode_id"])
+
+    @staticmethod
+    def _filter_episodes_by_name_scan(df, column, name):
+        """
+        Row-by-row substring match over a predicted-names list column.
+
+        The cells are lists of names in the Parquet file, but ``to_pandas()``
+        hands them back as numpy arrays, so this accepts any non-string
+        iterable rather than only ``list`` -- testing for ``list`` alone matched
+        nothing and made the host_name/guest_name filters silently empty.
+        """
+        key = name.lower()
+
+        def _matches(names):
+            if names is None or isinstance(names, str):
+                return False
+            try:
+                return any(key in str(n).lower() for n in names)
+            except TypeError:
+                return False
+
+        return df[df[column].map(_matches).to_numpy(dtype=bool)]
 
     # ------------------------------------------------------------------
     # Statistics
@@ -1120,6 +1175,74 @@ class ParquetBackend:
             )
         logger.info("Loading speaker name index from %s", path)
         self._speaker_index_df = pq.read_table(path).to_pandas()
+
+    def _ensure_host_index(self) -> None:
+        """Load host_index.parquet (podcast-grained hosts) on first use."""
+        if self._host_index_df is not None:
+            return
+        path = os.path.join(self._meta_dir, "host_index.parquet")
+        if not os.path.exists(path):
+            raise IndexNotBuiltError(
+                f"Host index not found at {path}. It ships with the dataset "
+                "metadata; update to a dataset build that includes it."
+            )
+        logger.info("Loading host index from %s", path)
+        self._host_index_df = pq.read_table(path).to_pandas()
+
+    def _ensure_host_episode_index(self) -> None:
+        """Load host_episode_index.parquet (episode-grained hosts) on first use."""
+        if self._host_episode_index_df is not None:
+            return
+        path = os.path.join(self._meta_dir, "host_episode_index.parquet")
+        if not os.path.exists(path):
+            raise IndexNotBuiltError(
+                f"Host episode index not found at {path}. It ships with the "
+                "dataset metadata; update to a dataset build that includes it."
+            )
+        logger.info("Loading host episode index from %s", path)
+        self._host_episode_index_df = pq.read_table(path).to_pandas()
+
+    def get_podcasts_by_host(self, name: str, *, exact: bool = False) -> List[str]:
+        """
+        Podcast ids whose predicted host names include *name*.
+
+        Reads ``metadata/host_index.parquet``, so it needs only the catalog
+        metadata -- no part files. ``exact`` requires a full (case-insensitive)
+        name match; otherwise the match is a substring.
+        """
+        self._ensure_host_index()
+        df = self._host_index_df
+        key = name.lower().strip()
+        if exact:
+            mask = df["name_normalized"] == key
+        else:
+            mask = df["name_normalized"].str.contains(key, na=False, regex=False)
+        return df.loc[mask, "podcast_id"].unique().tolist()
+
+    def search_by_host(
+        self, name: str, *, exact: bool = False, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Episodes whose predicted host names include *name*.
+
+        Reads ``metadata/host_episode_index.parquet`` (host name -> episode),
+        so it answers from the catalog metadata alone. Unlike
+        :meth:`search_by_speaker_name`, this covers hosts only; host names carry
+        none of the guest-mention artefact that method warns about.
+
+        Returns dicts with ``episode_id``, ``podcast_id``, ``name_original``.
+        """
+        self._ensure_host_episode_index()
+        df = self._host_episode_index_df
+        key = name.lower().strip()
+        if exact:
+            mask = df["name_normalized"] == key
+        else:
+            mask = df["name_normalized"].str.contains(key, na=False, regex=False)
+        result = df[mask].head(limit)
+        return result[["episode_id", "podcast_id", "name_original"]].to_dict(
+            orient="records"
+        )
 
     def _ensure_episode_metrics_df(self) -> None:
         """Load episode_metrics.parquet on first metrics query."""
