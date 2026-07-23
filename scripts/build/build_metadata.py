@@ -26,6 +26,7 @@ newly diarized episodes list every speaker detected, which the README describes.
 """
 
 import glob
+import json
 import os
 import sys
 from collections import defaultdict
@@ -241,6 +242,104 @@ def build_host_indexes():
     print(f"host_episode_index: {len(e_norm):,} rows", flush=True)
 
 
+def _part_guests(path):
+    """
+    Diarized guests in one episode part: (normalized, original, podcast, episode).
+
+    ``guest_speaker_labels`` is a JSON object mapping a guest's name to the
+    speaker label diarization assigned them, so its keys are the guests who
+    actually spoke -- unlike ``guest_predicted_names``, which lists everyone
+    named in the text and so includes people who were only discussed.
+    """
+    t = pq.ParquetFile(path).read(
+        columns=["podcast_id", "episode_id", "guest_speaker_labels"])
+    rows = []
+    for pid, eid, gl in zip(t.column("podcast_id").to_pylist(),
+                            t.column("episode_id").to_pylist(),
+                            t.column("guest_speaker_labels").to_pylist()):
+        if not gl or gl in ("{}", "SPEAKER_DATA_UNAVAILABLE"):
+            continue
+        raw = gl if isinstance(gl, str) else json.dumps(gl)
+        try:
+            d = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        for k in d:
+            s = str(k).strip()
+            if s:
+                rows.append((s.lower(), s, pid, eid))
+    return rows
+
+
+def build_guest_indexes():
+    """
+    Diarized-guest lookups, at two grains, from ``guest_speaker_labels``.
+
+    This is the appearance-verified counterpart to the guest rows of
+    ``speaker_name_index``: those come from ``guest_predicted_names`` and carry
+    the mention artefact (George Floyd indexed as a guest on 237 podcasts he
+    never appeared on), whereas these come from the diarization labels, so a
+    name here is someone who actually spoke on that episode.
+
+    Built by scanning the episode parts once at build time -- the same
+    guest_speaker_labels scan the tutorial subset builder used to run over the
+    Hub on every invocation. ``guest_index.parquet`` is podcast-grained (guest
+    -> podcast) and ``guest_episode_index.parquet`` carries it down to the
+    episode, mirroring the two host indexes.
+    """
+    parts = sorted(glob.glob(f"{OUT}/episodes/part-*.parquet"))
+    if not parts:
+        raise SystemExit("no episodes parts; run stage.py first")
+    workers = int(os.environ.get("SPORC_WORKERS", "16"))
+    print(f"scanning {len(parts)} episode parts for diarized guests, "
+          f"{workers} workers...", flush=True)
+
+    e_norm, e_orig, e_pid, e_eid = [], [], [], []
+    done = 0
+    with Pool(min(workers, len(parts))) as pool:
+        for rows in pool.imap_unordered(_part_guests, parts):
+            for low, orig, pid, eid in rows:
+                e_norm.append(low)
+                e_orig.append(orig)
+                e_pid.append(pid)
+                e_eid.append(eid)
+            done += 1
+            print(f"  {done}/{len(parts)}  guest rows so far {len(e_norm):,}",
+                  flush=True)
+
+    pq.write_table(
+        pa.table({
+            "name_normalized": pa.array(e_norm, type=pa.string()),
+            "name_original": pa.array(e_orig, type=pa.string()),
+            "podcast_id": pa.array(e_pid, type=pa.string()),
+            "episode_id": pa.array(e_eid, type=pa.string()),
+        }),
+        f"{OUT}/metadata/guest_episode_index.parquet", compression="zstd")
+    print(f"guest_episode_index: {len(e_norm):,} rows", flush=True)
+
+    # Podcast grain: distinct (guest, podcast). Keep the first spelling seen for
+    # each pair, which is enough to render a name.
+    seen = {}
+    for low, orig, pid in zip(e_norm, e_orig, e_pid):
+        seen.setdefault((low, pid), orig)
+    p_norm, p_orig, p_pid = [], [], []
+    for (low, pid), orig in seen.items():
+        p_norm.append(low)
+        p_orig.append(orig)
+        p_pid.append(pid)
+    pq.write_table(
+        pa.table({
+            "name_normalized": pa.array(p_norm, type=pa.string()),
+            "name_original": pa.array(p_orig, type=pa.string()),
+            "podcast_id": pa.array(p_pid, type=pa.string()),
+        }),
+        f"{OUT}/metadata/guest_index.parquet", compression="zstd")
+    print(f"guest_index: {len(p_norm):,} rows "
+          f"({len(set(p_norm)):,} distinct diarized guests)", flush=True)
+
+
 def main():
     os.makedirs(f"{OUT}/metadata", exist_ok=True)
     if "--host-only" in sys.argv:
@@ -248,11 +347,16 @@ def main():
         # re-running the turn-stats pass.
         build_host_indexes()
         return 0
+    if "--guest-only" in sys.argv:
+        # Rebuild just the diarized-guest indexes from the episode parts.
+        build_guest_indexes()
+        return 0
     copy_unchanged()
     stats = turn_stats()
     print(f"episodes with turns: {len(stats):,}", flush=True)
     rebuild_episode_catalog(stats)
     build_host_indexes()
+    build_guest_indexes()
     return 0
 
 

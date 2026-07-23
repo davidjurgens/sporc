@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.3
+
+Diarized guests are a shipped index, so the tutorial subset build no longer
+scans the corpus.
+
+The dataset now ships `metadata/guest_index.parquet` (diarized guest ->
+podcast, 25,165 rows) and `metadata/guest_episode_index.parquet` (-> episode,
+25,728 rows), built from `guest_speaker_labels` -- the diarization labels, so a
+name is someone who actually spoke, not merely someone `guest_predicted_names`
+listed as mentioned. There are 24,026 distinct diarized guests, against 385,932
+predicted guest rows in `speaker_name_index`; the gap is the mention artefact.
+
+`scripts/build_tutorial_subset.py` read those diarization labels itself,
+range-reading `guest_speaker_labels` out of all ~140 episode parts on every run
+-- the step that made the build slow against the Hub. It now reads the ~0.6 MB
+index instead, falling back to the part scan only when the index is absent
+(older dataset).
+
+New `get_podcasts_by_guest()` and `search_by_guest()` mirror the host methods
+and, unlike `search_by_speaker_name(role="guest")`, return appearances rather
+than mentions. Both are answered from the guest indexes alone, which the default
+metadata download now fetches.
+
 ## 1.1.2
 
 Host lookups are answered from small metadata indexes, and the host/guest

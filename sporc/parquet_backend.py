@@ -102,6 +102,8 @@ class ParquetBackend:
         self._speaker_index_df = None
         self._host_index_df = None
         self._host_episode_index_df = None
+        self._guest_index_df = None
+        self._guest_episode_index_df = None
         self._episode_metrics_df = None
         self._search_db_con = None
         # Whether the optional turn-text database is attached alongside the
@@ -1243,6 +1245,90 @@ class ParquetBackend:
         return result[["episode_id", "podcast_id", "name_original"]].to_dict(
             orient="records"
         )
+
+    def _ensure_guest_index(self) -> None:
+        """Load guest_index.parquet (podcast-grained diarized guests)."""
+        if self._guest_index_df is not None:
+            return
+        path = os.path.join(self._meta_dir, "guest_index.parquet")
+        if not os.path.exists(path):
+            raise IndexNotBuiltError(
+                f"Guest index not found at {path}. It ships with the dataset "
+                "metadata; update to a dataset build that includes it."
+            )
+        logger.info("Loading guest index from %s", path)
+        self._guest_index_df = pq.read_table(path).to_pandas()
+
+    def _ensure_guest_episode_index(self) -> None:
+        """Load guest_episode_index.parquet (episode-grained diarized guests)."""
+        if self._guest_episode_index_df is not None:
+            return
+        path = os.path.join(self._meta_dir, "guest_episode_index.parquet")
+        if not os.path.exists(path):
+            raise IndexNotBuiltError(
+                f"Guest episode index not found at {path}. It ships with the "
+                "dataset metadata; update to a dataset build that includes it."
+            )
+        logger.info("Loading guest episode index from %s", path)
+        self._guest_episode_index_df = pq.read_table(path).to_pandas()
+
+    def get_podcasts_by_guest(self, name: str, *, exact: bool = False) -> List[str]:
+        """
+        Podcast ids where *name* was diarized as a guest.
+
+        Reads ``metadata/guest_index.parquet``, built from
+        ``guest_speaker_labels`` -- so unlike ``guest_predicted_names``, a hit
+        here means the person actually spoke, not that they were mentioned.
+        ``exact`` requires a full case-insensitive match; otherwise substring.
+        """
+        self._ensure_guest_index()
+        df = self._guest_index_df
+        key = name.lower().strip()
+        if exact:
+            mask = df["name_normalized"] == key
+        else:
+            mask = df["name_normalized"].str.contains(key, na=False, regex=False)
+        return df.loc[mask, "podcast_id"].unique().tolist()
+
+    def search_by_guest(
+        self, name: str, *, exact: bool = False, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Episodes where *name* was diarized as a guest.
+
+        Reads ``metadata/guest_episode_index.parquet`` (guest name -> episode).
+        Because it is built from the diarization labels rather than
+        ``guest_predicted_names``, it does not carry the mention artefact that
+        :meth:`search_by_speaker_name` warns about: every hit is an appearance.
+
+        Returns dicts with ``episode_id``, ``podcast_id``, ``name_original``.
+        """
+        self._ensure_guest_episode_index()
+        df = self._guest_episode_index_df
+        key = name.lower().strip()
+        if exact:
+            mask = df["name_normalized"] == key
+        else:
+            mask = df["name_normalized"].str.contains(key, na=False, regex=False)
+        result = df[mask].head(limit)
+        return result[["episode_id", "podcast_id", "name_original"]].to_dict(
+            orient="records"
+        )
+
+    def diarized_guest_podcasts(self) -> Dict[str, set]:
+        """
+        Every diarized guest mapped to the podcasts they appeared on.
+
+        A bulk read of ``guest_index.parquet`` for callers that need the whole
+        mapping rather than one lookup -- the tutorial subset builder uses it to
+        avoid scanning ``guest_speaker_labels`` across every episode part.
+        """
+        self._ensure_guest_index()
+        df = self._guest_index_df
+        out: Dict[str, set] = {}
+        for name, pid in zip(df["name_normalized"], df["podcast_id"]):
+            out.setdefault(name, set()).add(pid)
+        return out
 
     def _ensure_episode_metrics_df(self) -> None:
         """Load episode_metrics.parquet on first metrics query."""

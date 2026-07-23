@@ -11,8 +11,13 @@ podcasts costs whole parts rather than one small file each. The selection here
 is deliberately scattered across the corpus -- that is what makes it a teaching
 subset -- so it touches most parts: measured on 1.1, 1,000 podcasts drawn at
 random span 116 of the 127 turn parts, 11.6 GB, where 1,000 consecutive
-podcasts in one category span 2 parts and 0.19 GB. Scanning 6,000 podcasts for
-repeat guests reaches essentially every episodes part.
+podcasts in one category span 2 parts and 0.19 GB.
+
+Finding the repeat guests used to add its own scan on top of that -- reading
+`guest_speaker_labels` out of every episode part to see who was diarized.
+Dataset 1.1.3 ships that as metadata/guest_index.parquet, so the selection now
+reads one ~0.6 MB file instead. The part fetch for the chosen podcasts is what
+remains expensive; pass --data-dir to avoid it.
 
 Run it against a local copy (--data-dir) if you have one. The output subset is
 about 210 MB, and the notebooks read that, so this only needs running when the
@@ -163,12 +168,27 @@ def diarized_guest_index(backend, smap):
 
     `guest_predicted_names` lists people *mentioned*, so it cannot be used:
     its top "guests" are figures who never spoke on any podcast. A non-empty
-    `guest_speaker_labels` is the only evidence a guest was really there, and
-    that lives in the episode rows rather than the catalogs.
+    `guest_speaker_labels` is the only evidence a guest was really there.
+
+    From dataset 1.1.3 that evidence is pre-computed into
+    metadata/guest_index.parquet, so this reads one ~0.6 MB file instead of
+    range-scanning `guest_speaker_labels` out of every episode part -- the
+    whole reason the tutorial build was slow against the Hub. The part scan
+    stays as a fallback for older datasets that predate the index.
     """
+    if backend._source.path("metadata/guest_index.parquet") is not None:
+        logger.info("Reading diarized guests from metadata/guest_index.parquet")
+        labelled = {n: set(ps) for n, ps in
+                    backend.diarized_guest_podcasts().items()
+                    if n not in NOT_GUESTS}
+        return labelled
+
     labelled = collections.defaultdict(set)
     parts = sorted({loc[0] for _, loc in smap.items("episodes")})
-    logger.info("Indexing diarized guests across %d episode parts", len(parts))
+    logger.warning(
+        "guest_index.parquet not in this dataset; scanning %d episode parts "
+        "for diarized guests (slow -- update to a build that ships the index)",
+        len(parts))
     for i, part in enumerate(parts, 1):
         # Two columns out of a ~110 MB part, across every part in the corpus.
         # read_columns range-reads just those column chunks over HTTP rather

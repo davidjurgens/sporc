@@ -122,6 +122,21 @@ def tmp_parquet_layout(tmp_path):
         "podcast_id": ep_pids,
         "episode_id": ep_ids,
     }), meta / "host_episode_index.parquet")
+    # Diarized guests come from guest_speaker_labels, which the fixture's
+    # episode part sets to "{}" -- i.e. no diarized guests. So the guest indexes
+    # are deliberately sparse: one appearance, on the episode with turns, which
+    # is not the same population as the predicted "A Guest" on every episode.
+    pq.write_table(pa.table({
+        "name_normalized": ["jane guest"],
+        "name_original": ["Jane Guest"],
+        "podcast_id": [PID_WITH_TURNS],
+    }), meta / "guest_index.parquet")
+    pq.write_table(pa.table({
+        "name_normalized": ["jane guest"],
+        "name_original": ["Jane Guest"],
+        "podcast_id": [PID_WITH_TURNS],
+        "episode_id": [EID_WITH_TURNS],
+    }), meta / "guest_episode_index.parquet")
 
     # From dataset 1.1 the trees are packed: many podcasts per part file, one
     # row group each, located through metadata/shard_map.parquet. The fixture

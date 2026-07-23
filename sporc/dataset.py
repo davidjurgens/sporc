@@ -155,6 +155,8 @@ class SPORCDataset:
         "metadata/episode_metrics.parquet",
         "metadata/host_index.parquet",
         "metadata/host_episode_index.parquet",
+        "metadata/guest_index.parquet",
+        "metadata/guest_episode_index.parquet",
     ]
 
     @classmethod
@@ -782,6 +784,33 @@ class SPORCDataset:
             List of dicts with episode_id, podcast_id, name_original.
         """
         return self._parquet_backend.search_by_host(
+            name, exact=exact, limit=limit,
+        )
+
+    def get_podcasts_by_guest(self, name: str, *,
+                              exact: bool = False) -> List[str]:
+        """
+        Podcast ids where *name* was diarized as a guest, from the guest index.
+
+        Built from ``guest_speaker_labels``, so a hit means the person actually
+        spoke -- not merely that they were named. Answered from
+        ``metadata/guest_index.parquet`` alone (no part-file downloads).
+        """
+        return self._parquet_backend.get_podcasts_by_guest(name, exact=exact)
+
+    def search_by_guest(self, name: str, *, exact: bool = False,
+                        limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Find episodes where *name* was diarized as a guest.
+
+        Unlike :meth:`search_by_speaker_name` with ``role="guest"``, every hit
+        is an appearance rather than a mention. Answered from
+        ``metadata/guest_episode_index.parquet`` alone.
+
+        Returns:
+            List of dicts with episode_id, podcast_id, name_original.
+        """
+        return self._parquet_backend.search_by_guest(
             name, exact=exact, limit=limit,
         )
 

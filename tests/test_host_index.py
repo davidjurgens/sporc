@@ -104,3 +104,81 @@ class TestSearchEpisodesRoutesThroughIndex:
             hits = backend.search_episodes(host_name="Ira")
         scan.assert_called_once()
         assert {h["episode_id"] for h in hits} == ALL_EPISODES
+
+
+class TestGuestIndex:
+    """Diarized-guest lookups from guest_index / guest_episode_index."""
+
+    def test_podcast_lookup(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.get_podcasts_by_guest("jane") == [PID_WITH_TURNS]
+
+    def test_podcast_lookup_case_insensitive(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.get_podcasts_by_guest("JANE GUEST") == [PID_WITH_TURNS]
+
+    def test_exact_rejects_substring(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.get_podcasts_by_guest("jane", exact=True) == []
+        assert backend.get_podcasts_by_guest("Jane Guest", exact=True) == [
+            PID_WITH_TURNS]
+
+    def test_episode_search_returns_ids(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.search_by_guest("jane guest") == [{
+            "episode_id": EID_WITH_TURNS,
+            "podcast_id": PID_WITH_TURNS,
+            "name_original": "Jane Guest",
+        }]
+
+    def test_predicted_guest_is_not_in_the_diarized_index(
+            self, tmp_parquet_layout):
+        # "A Guest" is predicted on every episode but never diarized, so the
+        # appearance index does not list them -- the whole point of the split.
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.get_podcasts_by_guest("A Guest") == []
+
+    def test_bulk_mapping(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert backend.diarized_guest_podcasts() == {
+            "jane guest": {PID_WITH_TURNS}}
+
+    def test_missing_index_raises_helpfully(self, tmp_parquet_layout):
+        os.unlink(os.path.join(tmp_parquet_layout, "metadata",
+                               "guest_index.parquet"))
+        backend = ParquetBackend(tmp_parquet_layout)
+        with pytest.raises(IndexNotBuiltError):
+            backend.get_podcasts_by_guest("jane")
+
+
+class TestTutorialReadsGuestIndex:
+    """The tutorial subset builder uses the index instead of a part scan."""
+
+    def _load_tutorial(self):
+        import importlib
+        import sys
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "scripts"))
+        return importlib.import_module("build_tutorial_subset")
+
+    def test_reads_index_without_scanning_parts(self, tmp_parquet_layout):
+        tut = self._load_tutorial()
+        backend = ParquetBackend(tmp_parquet_layout)
+        # If it scanned parts it would call read_columns on the source; the
+        # index path must not.
+        with patch.object(backend._source, "read_columns",
+                          side_effect=AssertionError("scanned parts")) as rc:
+            labelled = tut.diarized_guest_index(backend, backend.shard_map)
+        rc.assert_not_called()
+        assert labelled == {"jane guest": {PID_WITH_TURNS}}
+
+    def test_falls_back_to_part_scan_without_the_index(self, tmp_parquet_layout):
+        tut = self._load_tutorial()
+        os.unlink(os.path.join(tmp_parquet_layout, "metadata",
+                               "guest_index.parquet"))
+        backend = ParquetBackend(tmp_parquet_layout)
+        # The fixture's episode part has guest_speaker_labels="{}", so a scan
+        # finds no diarized guests -- but it must run rather than raise.
+        labelled = tut.diarized_guest_index(backend, backend.shard_map)
+        assert labelled == {}

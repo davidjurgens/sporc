@@ -129,6 +129,10 @@ def main():
                 f"{OUT}/metadata/host_index.parquet").metadata.num_rows,
             "host_episode_index_rows": pq.ParquetFile(
                 f"{OUT}/metadata/host_episode_index.parquet").metadata.num_rows,
+            "guest_index_rows": pq.ParquetFile(
+                f"{OUT}/metadata/guest_index.parquet").metadata.num_rows,
+            "guest_episode_index_rows": pq.ParquetFile(
+                f"{OUT}/metadata/guest_episode_index.parquet").metadata.num_rows,
         },
         "totals": {"files": total_files, "bytes": total_bytes},
         "compression": "zstd",
