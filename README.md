@@ -1,5 +1,9 @@
 # SPORC: Structured Podcast Open Research Corpus
 
+[![Documentation Status](https://readthedocs.org/projects/sporc/badge/?version=latest)](https://sporc.readthedocs.io/en/latest/)
+[![PyPI](https://img.shields.io/pypi/v/sporc)](https://pypi.org/project/sporc/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A Python package for working with the [SPoRC dataset](https://huggingface.co/datasets/blitt/SPoRC)
 — 228,099 podcasts and 1,124,058 episodes of transcripts, speaker turns, and
 acoustic features.
@@ -7,6 +11,11 @@ acoustic features.
 The dataset itself (schema, columns, layout, terms of use) is documented on the
 [dataset card](https://huggingface.co/datasets/blitt/SPoRC). This README covers
 the Python package.
+
+📖 **Full documentation:** [sporc.readthedocs.io](https://sporc.readthedocs.io) —
+guides and a complete API reference.
+🎓 **Tutorials:** [eight worked notebooks](examples/notebooks/) built around real
+research questions.
 
 ## Installation
 
@@ -17,8 +26,9 @@ The dataset is gated, so before installing:
 2. **Authenticate** locally:
    ```bash
    pip install huggingface_hub
-   huggingface-cli login
+   hf auth login
    ```
+   (On older `huggingface_hub` this command was `huggingface-cli login`.)
 
 Then:
 
@@ -45,7 +55,9 @@ from sporc import SPORCDataset
 # per podcast, as you touch it.
 sporc = SPORCDataset()
 
-podcast = sporc.search_podcast("Radiolab")
+# search_podcast matches by exact title first, then falls back to a substring
+# match — so prefer the full, exact title (or a podcast_id) to avoid surprises.
+podcast = sporc.search_podcast("The NPR Politics Podcast")
 print(podcast.title, podcast.num_episodes, "episodes")
 
 for episode in podcast.episodes:
@@ -76,7 +88,7 @@ sporc = SPORCDataset()
 
 # Fetch a known slice up front. Accepts podcast ids, podcast titles, episode
 # ids, or a path to a .json / newline-delimited .txt file of them.
-sporc = SPORCDataset(subset=["Radiolab", "99% Invisible"])
+sporc = SPORCDataset(subset=["The NPR Politics Podcast", "Stuff You Should Know"])
 sporc = SPORCDataset(subset="my_podcast_ids.txt")
 
 # Pin a run to that slice: anything outside it raises DataNotLocalError
@@ -93,7 +105,7 @@ sporc = SPORCDataset(lazy=False)
 `prefetch()` does the same job after construction, and reports what it resolved:
 
 ```python
-sporc.prefetch(["Radiolab"])
+sporc.prefetch(["The NPR Politics Podcast"])
 # {'podcasts': 1, 'files': 4, 'unresolved': []}
 ```
 
@@ -192,6 +204,32 @@ at the directory and nothing downloads:
 sporc = SPORCDataset(parquet_dir="subsets/subset_1")
 ```
 
+## Tutorials
+
+Eight standalone notebooks in [`examples/notebooks/`](examples/notebooks/), each
+framed around a real research question. They run against a small pre-built
+tutorial subset (not the full 57 GB corpus) — see the
+[notebooks README](examples/notebooks/README.md) for setup. **Start with 01**; it
+establishes the corpus caveats the rest depend on.
+
+| # | Notebook | Question |
+|---|---|---|
+| 01 | [Corpus cartography](examples/notebooks/01_corpus_cartography.ipynb) | What is actually in SPoRC? |
+| 02 | [NER co-mention networks](examples/notebooks/02_ner_comention_networks.ipynb) | Who gets talked about together? |
+| 03 | [Host/guest networks](examples/notebooks/03_host_guest_networks.ipynb) | Which shows share guests? |
+| 04 | [Repeat-guest language](examples/notebooks/04_repeat_guest_language.ipynb) | Do repeat guests reuse material? |
+| 05 | [Stance over time](examples/notebooks/05_stance_over_time.ipynb) | How did talk change around 25 May 2020? |
+| 06 | [Topic modeling (MALLET)](examples/notebooks/06_topic_modeling_mallet.ipynb) | What is podcasting about? |
+| 07 | [Sociophonetics: caught/cot](examples/notebooks/07_sociophonetics_caught_cot.ipynb) | Does this speaker merge *caught* and *cot*? |
+| 08 | [Conversational dynamics](examples/notebooks/08_conversational_dynamics.ipynb) | Who talks longest, and where do people overlap? |
+
+> If you only read one, read **07** — it starts from a question the corpus
+> *cannot* answer and shows what to do about it.
+
+Shorter, single-topic example scripts live in [`examples/`](examples/)
+(`basic_usage.py`, `category_examples.py`, `sliding_window_examples.py`,
+`time_range_examples.py`, `advanced_analysis.py`).
+
 ## Core Classes
 
 ### `SPORCDataset`
@@ -199,7 +237,7 @@ sporc = SPORCDataset(parquet_dir="subsets/subset_1")
 Search and retrieval over the corpus.
 
 ```python
-sporc.search_podcast("Radiolab")                  # -> Podcast
+sporc.search_podcast("The NPR Politics Podcast")  # -> Podcast
 sporc.search_episodes(min_duration=1800, category="science", max_episodes=20)
 sporc.search_episodes_by_subcategory("Technology", max_episodes=10)
 sporc.get_dataset_statistics()                    # counts, distributions
@@ -404,5 +442,6 @@ for its terms.
 
 ## Support
 
-Please [open an issue](https://github.com/davidjurgens/sporc/issues) for
-questions, bugs, or feature requests.
+- **Documentation:** [sporc.readthedocs.io](https://sporc.readthedocs.io)
+- **Tutorials:** [`examples/notebooks/`](examples/notebooks/)
+- **Questions, bugs, feature requests:** [open an issue](https://github.com/davidjurgens/sporc/issues)

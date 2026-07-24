@@ -44,8 +44,8 @@ from .constants import (
 )
 
 __version__ = "1.1.3"
-__author__ = "SPORC Package Maintainer"
-__email__ = "maintainer@example.com"
+__author__ = "David Jurgens"
+__email__ = "jurgens@umich.edu"
 
 __all__ = [
     "SPORCDataset",

@@ -108,8 +108,8 @@ class SPORCDataset:
     disabling downloads entirely.
 
     Example:
-        >>> sporc = SPORCDataset(subset=["Radiolab"], allow_downloads=False)
-        >>> podcast = sporc.search_podcast("Radiolab")
+        >>> sporc = SPORCDataset(subset=["The NPR Politics Podcast"])
+        >>> podcast = sporc.search_podcast("The NPR Politics Podcast")
     """
 
     DATASET_ID = "blitt/SPoRC"
@@ -854,12 +854,11 @@ class SPORCDataset:
         """
         Filter episodes by precomputed metrics.
 
-        Keyword Args:
-            min_word_count, max_word_count, min_turn_count, max_turn_count,
-            min_speaking_rate, max_speaking_rate,
-            min_discourse_marker_rate, max_discourse_marker_rate,
-            min_host_proportion, max_host_proportion,
-            min_avg_gap, max_avg_gap, limit.
+        Accepts ``min_``/``max_`` bounds on any of these metric keyword
+        arguments: ``word_count``, ``turn_count``, ``speaking_rate``,
+        ``discourse_marker_rate``, ``host_proportion``, and ``avg_gap``
+        (e.g. ``min_word_count=5000``). Also accepts ``limit`` to cap the
+        number of results returned.
 
         Returns:
             List of episode metric dicts.

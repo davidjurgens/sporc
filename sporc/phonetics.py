@@ -612,7 +612,8 @@ def measure_formants(audio, sample_rate: int, start: float, end: float,
     Args:
         audio: 1-D float array.
         sample_rate: Its sample rate.
-        start, end: Vowel interval, seconds into ``audio``.
+        start: Start of the vowel interval, in seconds into ``audio``.
+        end: End of the vowel interval, in seconds into ``audio``.
         max_formant: Praat's formant ceiling. The convention is 5500 Hz for
             female and 5000 Hz for male vocal tracts; the wrong ceiling biases
             every value, and SPoRC carries no speaker gender, so this is the

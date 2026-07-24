@@ -1,0 +1,115 @@
+site_name: SPoRC
+site_description: Structured Podcast Open Research Corpus — Python package documentation
+site_url: https://sporc.readthedocs.io/
+repo_url: https://github.com/davidjurgens/sporc
+repo_name: davidjurgens/sporc
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+# The GitHub-wiki archive and internal handoff notes are kept in-tree but are
+# not part of the built site. Remove docs/wiki once the port is verified.
+exclude_docs: |
+  wiki/
+  HANDOFF-*.md
+
+# Fail the build on broken internal links and anchors (the thing that matters),
+# without escalating benign mkdocstrings/griffe docstring warnings the way
+# `--strict` would.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  nav:
+    omitted_files: warn
+  links:
+    not_found: warn
+    anchors: warn
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_signature_annotations: true
+            separate_signature: true
+            merge_init_into_class: true
+            members_order: source
+            filters: ["!^_"]
+  # Renders the tutorial notebooks in the site. Comment out to speed local builds.
+  - mkdocs-jupyter:
+      include_source: true
+      execute: false
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Quick start: quickstart.md
+      - Working with the data: data-access.md
+  - Tutorials: tutorials.md
+  - Guides:
+      - Searching the corpus: guides/searching.md
+      - Data loading & subsets: guides/loading.md
+      - Categories: guides/categories.md
+      - Conversation analysis: guides/conversation-analysis.md
+      - Sliding windows: guides/sliding-windows.md
+      - Phonetics: guides/phonetics.md
+      - FAQ: guides/faq.md
+  - API reference:
+      - Overview: reference/index.md
+      - SPORCDataset: reference/sporcdataset.md
+      - Podcast: reference/podcast.md
+      - Episode: reference/episode.md
+      - Turn: reference/turn.md
+      - Phonetics: reference/phonetics.md
+      - Exceptions & constants: reference/misc.md
+  - Contributing: contributing.md
