@@ -1,10 +1,8 @@
 # Sliding windows
 
 SPORC can iterate an episode's conversation in fixed-size, overlapping chunks.
-Sliding windows are useful for processing long episodes, keeping conversational
-context together across chunk boundaries, and analyzing how a conversation
-changes over time. This guide builds on the [Quick start](../quickstart.md); for
-the full method list see the [API reference](../reference/index.md).
+This guide builds on the [Quick start](../quickstart.md); for the full method
+list see the [API reference](../reference/index.md).
 
 ## When to use them
 
@@ -61,17 +59,17 @@ print(f"Overlap turns: {len(window.overlap_turns)}")
 
 Helper methods on a window:
 
-- `window.get_text(separator=" ")` — the window's turns joined into one string
-- `window.get_speaker_distribution()` — `{speaker_label: turn_count}`
-- `window.get_role_distribution()` — `{role: turn_count}` (mostly
+- `window.get_text(separator=" ")`: the window's turns joined into one string
+- `window.get_speaker_distribution()`: `{speaker_label: turn_count}`
+- `window.get_role_distribution()`: `{role: turn_count}` (mostly
   `"NO_INFERRED_ROLE"`; see the caveat below)
-- `window.to_dict()` — a plain-dict summary
+- `window.to_dict()`: a plain-dict summary
 
 !!! note "Role distributions are a lower bound"
     About 90% of turns carry `inferred_speaker_role == "NO_INFERRED_ROLE"`; only
     ~7.4% are labelled `"host"` and ~1.9% `"guest"`. A window's role
-    distribution therefore counts *known* hosts and guests and undercounts the
-    rest — treat `"host"`/`"guest"` totals as floors, not a partition.
+    distribution therefore counts only known hosts and guests and undercounts
+    the rest. Treat `"host"`/`"guest"` totals as floors, not a partition.
 
 ## Turn-based windows
 
@@ -85,7 +83,7 @@ for window in episode.sliding_window(window_size=10, overlap=2):
 ```
 
 With `window_size=10, overlap=2`, each window shares 2 turns with the previous
-one and adds 8 new turns — the **step size** is `window_size - overlap`.
+one and adds 8 new turns. The step size is `window_size - overlap`.
 
 ## Time-based windows
 
@@ -104,7 +102,7 @@ for window in episode.sliding_window_by_time(
 ## Context-aware processing
 
 Set a high overlap when each chunk must carry enough of the previous
-conversation to stand on its own — for example when feeding windows to a
+conversation to stand on its own, for example when feeding windows to a
 language model. `new_turns` and `overlap_turns` let you tell fresh content from
 carried-over context:
 
@@ -220,13 +218,13 @@ for idx, time_range, transitions in window_transitions(episode):
 - 50%+: maximum context, at the cost of re-processing turns
 
 Overlap must be strictly less than the window size, and all parameters must be
-positive — otherwise the methods raise `ValueError` (see below).
+positive; otherwise the methods raise `ValueError` (see below).
 
 **Turn-based vs time-based**
 
-- Turn-based windows give a consistent turn count — good for turn-taking and
+- Turn-based windows give a consistent turn count, good for turn-taking and
   speaker-interaction work.
-- Time-based windows give a consistent duration — good for temporal and topic
+- Time-based windows give a consistent duration, good for temporal and topic
   analysis, where you want equal spans of the timeline.
 
 ## Error handling
@@ -250,8 +248,8 @@ except RuntimeError as e:
 ## Working efficiently
 
 Episodes reached through `search_podcast` or `search_episodes` load their turns
-on demand — the first time you touch `episode.turns` or call a sliding-window
-method — so no explicit "load turns" step is needed. To keep a whole run off the
+on demand, the first time you touch `episode.turns` or call a sliding-window
+method, so no explicit "load turns" step is needed. To keep a whole run off the
 network, fetch the shows you need up front and iterate their episodes:
 
 ```python

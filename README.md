@@ -4,16 +4,16 @@
 [![PyPI](https://img.shields.io/pypi/v/sporc)](https://pypi.org/project/sporc/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Python package for working with the [SPoRC dataset](https://huggingface.co/datasets/blitt/SPoRC)
-— 228,099 podcasts and 1,124,058 episodes of transcripts, speaker turns, and
-acoustic features.
+A Python package for working with the [SPoRC dataset](https://huggingface.co/datasets/blitt/SPoRC).
+It covers 228,099 podcasts and 1,124,058 episodes of transcripts, speaker turns,
+and acoustic features.
 
 The dataset itself (schema, columns, layout, terms of use) is documented on the
 [dataset card](https://huggingface.co/datasets/blitt/SPoRC). This README covers
 the Python package.
 
-📖 **Full documentation:** [sporc.readthedocs.io](https://sporc.readthedocs.io) —
-guides and a complete API reference.
+📖 **Full documentation:** [sporc.readthedocs.io](https://sporc.readthedocs.io),
+with guides and a complete API reference.
 🎓 **Tutorials:** [eight worked notebooks](examples/notebooks/) built around real
 research questions.
 
@@ -21,8 +21,8 @@ research questions.
 
 The dataset is gated, so before installing:
 
-1. **Accept the terms** at [huggingface.co/datasets/blitt/SPoRC](https://huggingface.co/datasets/blitt/SPoRC)
-   — log in and click "Agree".
+1. **Accept the terms** at [huggingface.co/datasets/blitt/SPoRC](https://huggingface.co/datasets/blitt/SPoRC).
+   Log in and click "Agree".
 2. **Authenticate** locally:
    ```bash
    pip install huggingface_hub
@@ -44,7 +44,7 @@ cd sporc
 pip install -e .
 ```
 
-Full-text search additionally needs DuckDB: `pip install sporc[duckdb]`.
+Full-text search also needs DuckDB: `pip install sporc[duckdb]`.
 
 ## Quick Start
 
@@ -71,9 +71,9 @@ for episode in podcast.episodes:
 
 ## Data Access
 
-The corpus is ~57 GB and partitioned by podcast, so **the podcast is the unit of
-transfer**. A median podcast is ~75 KB, which means the one-time ~195 MB of
-catalogs dominates any study of less than a few thousand podcasts:
+The corpus is ~57 GB and partitioned by podcast, so each podcast is fetched as a
+unit. A median podcast is ~75 KB, so the one-time ~195 MB of catalogs dominates
+any study of less than a few thousand podcasts:
 
 | Study size | Data fetched |
 |---|---|
@@ -111,9 +111,9 @@ sporc.prefetch(["The NPR Politics Podcast"])
 
 ### Selecting a subset efficiently
 
-**Selection is metadata-only.** These run off the already-downloaded catalogs
-and fetch nothing, so you can narrow to exactly the episodes you want and only
-then pull data:
+Selection is metadata-only. The calls below run off the already-downloaded
+catalogs and fetch nothing, so you can narrow to exactly the episodes you want
+and only then pull data:
 
 ```python
 hits = sporc.filter_episodes_by_metrics(min_word_count=5000, limit=200)
@@ -124,26 +124,25 @@ sporc.prefetch({"episode_ids": [h["episode_id"] for h in hits]})
 
 Two things worth knowing:
 
-- **Pass `max_episodes` to `search_episodes`.** Matching is metadata-only, but
+- Pass `max_episodes` to `search_episodes`. Matching is metadata-only, but
   building each `Episode` reads that podcast's partition. `category="comedy"`
-  matches 62,622 episodes across 14,668 podcasts; `max_episodes=10` reads 10
+  matches 62,622 episodes across 14,668 podcasts, so `max_episodes=10` reads 10
   partitions instead.
-- **`filter_episodes_by_metrics` implies turn data.** `episode_metrics` is
-  derived from turns, so it only covers the 372,604 diarized episodes and never
-  wastes a fetch on an episode without them. Filtering the catalog directly,
+- `filter_episodes_by_metrics` implies turn data. `episode_metrics` is
+  derived from turns, so it only covers diarized episodes and never
+  fetches one without them. Filtering the catalog directly,
   `num_main_speakers > 0` marks the same set.
 
 ### Time span
 
-SPoRC is a **two-month snapshot**: every episode was published between
-**1 May and 30 June 2020** (median 28 May). It is not a longitudinal archive, so
-"trends over time" means trends across eight weeks — though the window does
-straddle a sharp, dateable event, which makes before/after designs unusually
-clean.
+SPoRC is a two-month snapshot: every episode was published between
+1 May and 30 June 2020 (median 28 May). It is not a longitudinal archive, so
+"trends over time" means trends across eight weeks. The window does straddle a
+sharp, dateable event, which makes before/after designs unusually clean.
 
 ### Turn coverage
 
-Only **731,101 of 1,124,058 episodes (65%)** were diarized into speaker turns.
+Only 731,101 of 1,124,058 episodes (65%) were diarized into speaker turns.
 The rest have a transcript but are marked `SPEAKER_DATA_UNAVAILABLE` upstream.
 Dataset version 1.1 roughly doubled this: 1.0 had 372,604 (33%), and 358,497
 episodes that had been diarized but never merged were added.
@@ -167,7 +166,7 @@ full-text index when present, and otherwise scan the turn partitions on disk:
 | 5,000 episodes (83 MB) | 5.4s | " |
 | all 78M turns | impractical | 1.7s open, ~5s/query (50s cold) |
 
-The index earns its 26 GB only for whole-corpus work; below ~5,000 episodes,
+The 26 GB index is only worthwhile for whole-corpus work; below ~5,000 episodes,
 scanning beats its cold start alone.
 
 ```python
@@ -179,11 +178,12 @@ results = sporc.concordance("like", context_words=5)         # KWIC
 ```
 
 Without the index, `mode="fts"` ranks by term frequency rather than BM25 and
-covers only local data; the package warns, naming how many podcasts it scanned.
+covers only local data; the package warns and reports how many podcasts it
+scanned.
 
 ### Building teaching subsets
 
-`scripts/make_subset.py` cuts a self-contained mini-SPoRC, filtering the
+`scripts/make_subset.py` cuts a self-contained mini-SPoRC. It filters the
 catalogs *and* episode partitions together so counts, searches and statistics
 are all true of the subset:
 
@@ -208,8 +208,8 @@ sporc = SPORCDataset(parquet_dir="subsets/subset_1")
 
 Eight standalone notebooks in [`examples/notebooks/`](examples/notebooks/), each
 framed around a real research question. They run against a small pre-built
-tutorial subset (not the full 57 GB corpus) — see the
-[notebooks README](examples/notebooks/README.md) for setup. **Start with 01**; it
+tutorial subset (not the full 57 GB corpus). See the
+[notebooks README](examples/notebooks/README.md) for setup. Start with 01; it
 establishes the corpus caveats the rest depend on.
 
 | # | Notebook | Question |
@@ -223,7 +223,7 @@ establishes the corpus caveats the rest depend on.
 | 07 | [Sociophonetics: caught/cot](examples/notebooks/07_sociophonetics_caught_cot.ipynb) | Does this speaker merge *caught* and *cot*? |
 | 08 | [Conversational dynamics](examples/notebooks/08_conversational_dynamics.ipynb) | Who talks longest, and where do people overlap? |
 
-> If you only read one, read **07** — it starts from a question the corpus
+> If you only read one, read **07**. It starts from a question the corpus
 > *cannot* answer and shows what to do about it.
 
 Shorter, single-topic example scripts live in [`examples/`](examples/)
@@ -290,13 +290,13 @@ turn.is_host, turn.is_guest
 turn.get_audio_features()    # MFCCs, F0, F1
 ```
 
-**The acoustics are thin.** `get_audio_features()` returns six numbers —
-`mfcc1..4_sma3_mean`, one F0 mean, one F1 mean — each averaged over the *whole
-turn*. There is no F2, no frame-level contour, and **no word-level timing
-anywhere in SPoRC**. Vowel-level questions cannot be answered from these fields;
-see [Phonetics](#phonetics) for the way around it.
+The acoustics are thin. `get_audio_features()` returns six numbers
+(`mfcc1..4_sma3_mean`, one F0 mean, one F1 mean), each averaged over the *whole
+turn*. There is no F2, no frame-level contour, and no word-level timing anywhere
+in SPoRC. Vowel-level questions cannot be answered from these fields; see
+[Phonetics](#phonetics) for the way around it.
 
-**Role labels are sparse.** In a 174k-turn sample, 90.6% of turns are
+Role labels are sparse. In a 174k-turn sample, 90.6% of turns are
 `NO_INFERRED_ROLE`, with only 7.4% `host` and 1.9% `guest`. So `get_host_turns()`,
 `search_turns(speaker_role=...)` and role distributions cover a small slice of an
 episode, and an unlabelled turn does not mean nobody spoke. Treat role-based
@@ -318,7 +318,7 @@ for window in episode.sliding_window_by_time(window_duration=300, overlap_durati
 
 ## Phonetics
 
-SPoRC has no word timings, and its acoustics are six per-turn means with no F2 —
+SPoRC has no word timings, and its acoustics are six per-turn means with no F2,
 so vowel-level work is impossible from the corpus alone. But every turn carries an
 `mp3_url` plus its own `start_time`/`end_time`, which is enough to fetch that turn
 and derive alignment properly.
@@ -363,23 +363,24 @@ measure_formants(clip, sr, v.start, v.end)              # F1/F2/F3
 
 Worth knowing before you rely on it:
 
-- **Only the turn is downloaded.** ffmpeg seeks into the remote mp3 with an HTTP
+- Only the turn is downloaded. ffmpeg seeks into the remote mp3 with an HTTP
   range request: ~1–2 s and a few hundred KB per turn, not a 100 MB episode.
-- **Aligning costs more than fetching.** Finding a word means aligning the whole
-  turn, at ~0.45x realtime on CPU — so cost scales with the *turn*, not the word.
+- Aligning costs more than fetching. Finding a word means aligning the whole
+  turn, at ~0.45x realtime on CPU, so cost scales with the *turn*, not the word.
   Turns run long (median ~64 s for a common word, longest in the corpus 3,240 s),
   so `find_word_tokens` skips turns over `max_turn_duration=30` by default and
-  logs what it dropped. A `limit=50` call is minutes, not seconds.
-- **The audio is external.** `mp3_url` points at the publisher's CDN, not
-  HuggingFace. Links rot; some hosts need redirects resolved first, which
+  logs what it dropped. A `limit=50` call takes minutes, not seconds.
+- The audio is external. `mp3_url` points at the publisher's CDN, not
+  HuggingFace. Links rot, and some hosts need redirects resolved first, which
   `fetch_turn_audio` does.
-- **A speaker is a name.** `lobanov_normalize` groups by inferred name across
-  episodes and shows, and drops `NO_INFERRED_SPEAKER` and raw `SPEAKER_00`
-  labels rather than pooling them — the placeholder is the corpus's most common
-  speaker value and would otherwise average unrelated people into one voice.
-  Two real people sharing a name still pool; SPoRC has no canonical speaker id.
-- **`estimate_word_audio()` is not this.** It interpolates by character offset and
-  is deprecated for phonetic use.
+- A speaker is identified only by name. `lobanov_normalize` groups by inferred
+  name across episodes and shows, and drops `NO_INFERRED_SPEAKER` and raw
+  `SPEAKER_00` labels rather than pooling them. The placeholder is the corpus's
+  most common speaker value and would otherwise average unrelated people into one
+  voice. Two real people sharing a name still pool, because SPoRC has no canonical
+  speaker id.
+- `estimate_word_audio()` is not a substitute for this. It interpolates by
+  character offset and is deprecated for phonetic use.
 
 `examples/notebooks/07_sociophonetics_caught_cot.ipynb` works the whole thing
 through on the caught/cot merger.
@@ -436,7 +437,7 @@ If you use SPoRC in your research, please cite:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The dataset itself is released for research and
+MIT; see [LICENSE](LICENSE). The dataset itself is released for research and
 educational use only; see the [dataset card](https://huggingface.co/datasets/blitt/SPoRC)
 for its terms.
 

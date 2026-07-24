@@ -1,7 +1,7 @@
 # Installation
 
-The SPoRC dataset is **gated**, so authentication is a required first step —
-without it, downloads fail with an access error.
+The SPoRC dataset is gated, so authentication is a required first step. Without
+it, downloads fail with an access error.
 
 ## 1. Accept the dataset terms
 

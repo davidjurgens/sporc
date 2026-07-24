@@ -1,29 +1,28 @@
 # Data loading & subsets
 
-The SPoRC corpus is ~57 GB and **partitioned by podcast**, so the podcast is the
-unit of transfer. You almost never need all of it. This guide explains how the
-dataset loads data — lazily by default — and how to control exactly how much is
-fetched: a fixed subset up front, the whole corpus eagerly, or nothing beyond
-what's already local.
+The SPoRC corpus is ~57 GB and partitioned by podcast, so the podcast is the
+unit of transfer. You almost never need all of it. By default the dataset loads
+lazily, and you control how much is fetched: a fixed subset up front, the whole
+corpus eagerly, or nothing beyond what's already local.
 
 !!! note "The short version"
-    - `SPORCDataset()` — **lazy** (the default): fetch the ~195 MB metadata
-      catalogs now, per-podcast data as you touch it.
-    - `SPORCDataset(subset=[...])` — also fetch a fixed slice up front, so later
+    - `SPORCDataset()`: lazy by default. Fetches the ~195 MB metadata catalogs
+      now, and per-podcast data as you touch it.
+    - `SPORCDataset(subset=[...])`: also fetches a fixed slice up front, so later
       access to it needs no network.
-    - `SPORCDataset(subset=[...], allow_downloads=False)` — pin a run to that
-      slice; anything outside it raises rather than downloading.
-    - `SPORCDataset(lazy=False)` — download the whole corpus up front.
+    - `SPORCDataset(subset=[...], allow_downloads=False)`: pins a run to that
+      slice. Anything outside it raises rather than downloading.
+    - `SPORCDataset(lazy=False)`: downloads the whole corpus up front.
 
 ## How loading works
 
 Two facts shape everything below:
 
-1. **Data is partitioned by podcast.** Working with a handful of podcasts costs
+1. Data is partitioned by podcast. Working with a handful of podcasts costs
    a handful of small files, not the whole corpus. A median podcast is ~75 KB,
    so the one-time ~195 MB of metadata catalogs dominates any study of fewer
    than a few thousand podcasts.
-2. **Turn data is loaded on demand and only exists for ~65% of episodes.** Of
+2. Turn data is loaded on demand and only exists for ~65% of episodes. Of
    1,124,058 episodes, 731,101 were diarized into speaker turns. Accessing an
    episode's turns fetches and parses that podcast's turn partition the first
    time; episodes without turn data return an empty list. Always gate on
@@ -60,8 +59,8 @@ reference](../reference/sporcdataset.md).
 ## Lazy loading (the default)
 
 Lazy loading fetches only the metadata catalogs at construction, then pulls each
-podcast's partition the first time you touch it. This is the right default: fast
-startup, low memory, and downloads that scale with what you actually use.
+podcast's partition the first time you touch it. This keeps startup fast and
+memory low, and downloads scale with what you actually use.
 
 ```python
 from sporc import SPORCDataset
@@ -82,8 +81,8 @@ for episode in podcast.episodes:
 
 Turns load automatically the first time you access `episode.turns`,
 `episode.get_all_turns()`, or `episode.get_turn_statistics()`. You can also
-trigger the load explicitly — useful for warming a set of episodes before a
-timed loop:
+trigger the load explicitly, which is useful for warming a set of episodes
+before a timed loop:
 
 ```python
 # Load turns for one episode up front
@@ -136,8 +135,8 @@ reported rather than silently fetched as a 404.
 
 Combine `subset` with `allow_downloads=False` to guarantee a run touches nothing
 beyond its slice. Anything outside the subset raises `DataNotLocalError` instead
-of quietly downloading more — handy for reproducible experiments and metered
-connections.
+of quietly downloading more. This helps with reproducible experiments and
+metered connections.
 
 ```python
 from sporc import SPORCDataset
@@ -162,7 +161,7 @@ podcast = sporc.search_podcast("The NPR Politics Podcast")
 ## Eager download
 
 Set `lazy=False` to download the whole corpus up front. Only do this when you
-genuinely need all of it and have the disk space — it's ~31 GB across hundreds
+genuinely need all of it and have the disk space. It's ~31 GB across hundreds
 of files. Every subsequent access is then local.
 
 ```python
@@ -171,7 +170,7 @@ of files. Every subsequent access is then local.
 sporc = SPORCDataset(lazy=False)
 ```
 
-To read a copy of the layout you already have on disk, pass `parquet_dir=` — this
+To read a copy of the layout you already have on disk, pass `parquet_dir=`, which
 never downloads anything:
 
 ```python
@@ -180,8 +179,8 @@ sporc = SPORCDataset(parquet_dir="/path/to/sporc_parquet")
 
 ## One-pass processing over the whole corpus
 
-For a single sequential sweep — collecting a statistic, filtering to a working
-set — iterate rather than materializing everything. `iterate_episodes()` and
+For a single sequential sweep, such as collecting a statistic or filtering to a
+working set, iterate rather than materializing everything. `iterate_episodes()` and
 `iterate_podcasts()` build one object at a time and let you cap the work with
 `max_episodes` / `max_podcasts` and `sampling_mode` (`"first"` or `"random"`).
 
@@ -198,7 +197,7 @@ print(f"Kept {len(long_episodes)} long multi-speaker episodes")
 
 !!! warning "Bound whole-corpus iteration"
     `iterate_episodes()` with no cap builds every episode in turn, one partition
-    read each — on a lazy source that downloads most of the corpus. Pass
+    read each, which on a lazy source downloads most of the corpus. Pass
     `max_episodes=` (or `max_podcasts=`), and use `sampling_mode="random"` for a
     representative slice. The same warning applies to `get_all_episodes()` and
     `get_all_podcasts()`, which build the entire corpus eagerly.
@@ -245,24 +244,24 @@ print("Speaker distribution:", stats["speaker_distribution"])
 
 ## Best practices
 
-1. **Stay lazy unless you have a reason not to.** The default fetches the least
+1. Stay lazy unless you have a reason not to. The default fetches the least
    and starts the fastest.
-2. **Name your slice.** If you know which podcasts you need, pass `subset=` — it
+2. Name your slice. If you know which podcasts you need, pass `subset=`; it
    turns repeated, per-touch downloads into one up-front fetch.
-3. **Pin reproducible runs** with `allow_downloads=False` so an experiment can't
+3. Pin reproducible runs with `allow_downloads=False` so an experiment can't
    silently grow.
-4. **Cap whole-corpus iteration** with `max_episodes` / `max_podcasts`; reach for
+4. Cap whole-corpus iteration with `max_episodes` / `max_podcasts`, and reach for
    `get_all_episodes()` only on an already-loaded subset.
-5. **Gate on `episode.has_turn_data`** before reading turns — a third of
+5. Gate on `episode.has_turn_data` before reading turns, since a third of
    episodes have none.
-6. **Opt into the big extras deliberately.** `include_search_db` (~14 GB) and
+6. Opt into the big extras deliberately. `include_search_db` (~14 GB) and
    `include_turn_text` (~19 GB) are only needed for full-text search;
    `load_audio_features` pulls a separate acoustics tree.
 
 ## See also
 
-- [Working with the data](../data-access.md) — the partitioning model and how
+- [Working with the data](../data-access.md): the partitioning model and how
   much each study size costs.
-- [Searching the corpus](searching.md) — the search API these loading modes feed.
-- [Quick start](../quickstart.md) — the shortest end-to-end example.
-- [API reference](../reference/sporcdataset.md) — full `SPORCDataset` signatures.
+- [Searching the corpus](searching.md): the search API these loading modes feed.
+- [Quick start](../quickstart.md): the shortest end-to-end example.
+- [API reference](../reference/sporcdataset.md): full `SPORCDataset` signatures.

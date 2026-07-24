@@ -7,7 +7,7 @@ on the [Quick start](../quickstart.md); for the full method list see the
 
 ## What you can analyze
 
-Conversation analysis in SPORC works from an episode's **turns** — contiguous
+Conversation analysis in SPORC works from an episode's turns: contiguous
 stretches of speech attributed to one or more speakers. From those you can study:
 
 - **Turn-taking**: how speakers hand off the floor
@@ -15,15 +15,15 @@ stretches of speech attributed to one or more speakers. From those you can study
 - **Timing and pacing**: turn durations, speaking rate, and how they shift over an episode
 - **Roles**: how hosts and guests participate (with the caveats below)
 
-!!! warning "Two facts that shape every turn analysis"
-    - **Only ~65% of episodes have turn data.** `len(episode.turns) == 0` almost
-      always means the corpus never diarized that episode, not that nobody
-      spoke. Always gate on `episode.has_turn_data` before drawing conclusions.
-    - **Speaker roles are a lower bound, not a partition.** About 90% of turns
+!!! warning "Two facts about turn data"
+    - Only about 65% of episodes have turn data. `len(episode.turns) == 0`
+      almost always means the corpus never diarized that episode, not that
+      nobody spoke. Gate on `episode.has_turn_data` before drawing conclusions.
+    - Speaker roles are a lower bound, not a partition. About 90% of turns
       carry `inferred_speaker_role == "NO_INFERRED_ROLE"`; only ~7.4% are
       labelled `"host"` and ~1.9% `"guest"`. So `get_host_turns()`,
-      `get_guest_turns()`, and any role distribution count *known* hosts and
-      guests — they undercount the real totals and never sum to all turns.
+      `get_guest_turns()`, and any role distribution count only known hosts and
+      guests. They undercount the real totals and never sum to all turns.
 
 ## Getting turns
 
@@ -96,7 +96,7 @@ for turn in sorted(all_turns, key=lambda t: t.duration, reverse=True)[:5]:
     print(f"  {turn.primary_speaker}: {turn.duration:.1f}s - {turn.text[:80]}...")
 ```
 
-`get_turns_by_min_length` does the same filtering server-side of your loop:
+`get_turns_by_min_length` does the same filtering for you:
 
 ```python
 monologue_turns = episode.get_turns_by_min_length(60)  # turns >= 60s
@@ -131,7 +131,7 @@ for speaker, s in participation.items():
 
 ## Working with roles
 
-When you specifically want known hosts or guests, use the role accessors — but
+When you specifically want known hosts or guests, use the role accessors, but
 remember they are a lower bound (see the warning above):
 
 ```python
@@ -160,7 +160,7 @@ print("Interview?", episode.is_interview, "| Solo?", episode.is_solo)
 
 ## Turn-taking patterns
 
-Speaker transitions are not a stored method — build them from consecutive turns
+Speaker transitions are not a stored method. Build them from consecutive turns
 using `primary_speaker`:
 
 ```python
@@ -291,7 +291,7 @@ print(f"Fast turns (>3.5 w/s): {len(fast)} | slow turns (<1.7 w/s): {len(slow)}"
 For long episodes, or to keep conversational context together while you process
 it, iterate the transcript in overlapping windows. That has its own guide:
 
-- [Sliding windows](sliding-windows.md) — turn-based and time-based windows,
+- [Sliding windows](sliding-windows.md): turn-based and time-based windows,
   overlap for context, and per-window statistics.
 
 A one-line taste:
@@ -351,7 +351,7 @@ if result:
 1. **Gate on `episode.has_turn_data`** so you skip the ~35% of episodes with no
    turns instead of processing empty lists.
 2. **Fetch a subset up front** with `SPORCDataset(subset=[...])` when you know
-   which shows you need — it keeps later access off the network. See
+   which shows you need. It keeps later access off the network. See
    [Working with the data](../data-access.md).
 3. **Filter turns early** (`get_turns_by_min_length`, `get_turns_by_time_range`)
    rather than materializing every turn and filtering in Python.

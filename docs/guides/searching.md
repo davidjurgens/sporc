@@ -2,13 +2,12 @@
 
 SPoRC gives you several ways to find podcasts and episodes: structured metadata
 filters, speaker-name lookups, and (optionally) full-text search over the turn
-transcripts. This guide works through each, from the simplest lookup to layered
-research queries.
+transcripts.
 
 !!! note "Set-up"
     Every example assumes you've [installed the package and
-    authenticated](../installation.md). The dataset loads lazily by default —
-    only the ~195 MB metadata catalogs are fetched up front, and per-podcast
+    authenticated](../installation.md). The dataset loads lazily by default.
+    Only the ~195 MB metadata catalogs are fetched up front, and per-podcast
     data is pulled as your searches touch it. See [Data loading &
     subsets](loading.md) for how to bound that.
 
@@ -20,7 +19,7 @@ sporc = SPORCDataset()
 
 ## Finding a podcast by name
 
-`search_podcast` matches the **exact** title first, then falls back to a
+`search_podcast` matches the exact title first, then falls back to a
 substring match, so prefer the full, exact title.
 
 ```python
@@ -30,8 +29,8 @@ print("Primary category:", podcast.primary_category)
 print("Hosts:", ", ".join(podcast.host_names))
 ```
 
-To scan titles yourself — for example, every podcast whose title mentions a
-word — iterate rather than materializing all 228,099 podcasts at once:
+To scan titles yourself (for example, every podcast whose title mentions a
+word), iterate rather than materializing all 228,099 podcasts at once:
 
 ```python
 # Bounded scan: look at the first 2,000 podcasts only.
@@ -43,7 +42,7 @@ print(f"Found {len(matches)} podcasts with 'politics' in the title")
 ```
 
 !!! warning "`search_podcast` raises if nothing matches"
-    A missing podcast raises `NotFoundError`, it does not return `None`. Wrap
+    A missing podcast raises `NotFoundError` rather than returning `None`. Wrap
     lookups you're unsure about in `try` / `except NotFoundError`.
 
 ## Searching episodes by metadata
@@ -53,7 +52,7 @@ the episode catalog. The supported criteria are:
 
 | Criterion | Meaning |
 |---|---|
-| `min_duration`, `max_duration` | Episode length, in **seconds** |
+| `min_duration`, `max_duration` | Episode length, in seconds |
 | `min_speakers`, `max_speakers` | Number of diarized main speakers |
 | `host_name` | Substring match against predicted host names |
 | `guest_name` | Substring match against predicted guest names |
@@ -68,7 +67,7 @@ the episode catalog. The supported criteria are:
     Passing a criterion that isn't on this list (a typo, or an old parameter
     like `min_total_duration`) raises `TypeError` rather than silently
     returning the whole catalog. To cap the number of results, use
-    `max_episodes=` — not `limit=`.
+    `max_episodes=`, not `limit=`.
 
 ### By duration
 
@@ -113,7 +112,7 @@ solo = sporc.search_episodes(min_speakers=1, max_speakers=1, max_episodes=100)
 
 ### By host or guest
 
-`host_name` and `guest_name` take a **single** name string and match it as a
+`host_name` and `guest_name` take a single name string and match it as a
 substring against the predicted names.
 
 ```python
@@ -125,12 +124,12 @@ guest_episodes = sporc.search_episodes(guest_name="Ira Glass", max_episodes=100)
 ```
 
 For faster, index-backed name lookups that return lightweight dicts (and avoid
-building full `Episode` objects), use the dedicated methods below —
+building full `Episode` objects), use the dedicated methods below in
 [Searching by speaker](#searching-by-speaker).
 
 ### By category and subcategory
 
-`category` matches against a podcast's categories **and** subcategories as a
+`category` matches against a podcast's categories and subcategories as a
 case-insensitive substring, so `"Science"` also catches science subcategories.
 Use `search_episodes_by_subcategory` (or the `subcategory=` criterion) when you
 want to target a subcategory specifically.
@@ -263,13 +262,13 @@ lines = sporc.concordance("pandemic", context_words=8, limit=25)
 
 `search_turns` and `search_episodes_by_text` accept `mode="fts"` (ranked),
 `mode="exact"` (substring/ILIKE), or `mode="regex"`. Substring and regex modes
-also read the turn-text database — pass `include_turn_text=True` if you rely on
+also read the turn-text database. Pass `include_turn_text=True` if you rely on
 them heavily.
 
 ## Sampling results
 
 `max_episodes` caps the result count; `sampling_mode` controls how the cap is
-applied — `"first"` (default) takes them in catalog order, `"random"` draws a
+applied. `"first"` (default) takes them in catalog order, and `"random"` draws a
 random sample.
 
 ```python
@@ -295,7 +294,7 @@ random_news = sporc.search_episodes(
 
 !!! tip "`random` samples before building"
     In `"random"` mode the candidate rows are shuffled *before* any `Episode` is
-    built, so a random sample of 100 downloads ~100 podcasts' partitions — not
+    built, so a random sample of 100 downloads ~100 podcasts' partitions, not
     the whole matching set.
 
 ## Analyzing results
@@ -333,8 +332,8 @@ if results:
 
 !!! warning "Turn data is not guaranteed"
     Only ~65% of the 1,124,058 episodes (731,101) were diarized into speaker
-    turns. Speaker-count and turn-level analysis only apply to those — always
-    gate on `episode.has_turn_data` before reading turns:
+    turns. Speaker-count and turn-level analysis only apply to those, so
+    always gate on `episode.has_turn_data` before reading turns:
 
     ```python
     for ep in results:
@@ -364,23 +363,23 @@ except SPORCError as e:
 
 ## Tips for effective searching
 
-1. **Start simple, then layer.** Add criteria one at a time.
-2. **Always cap broad searches** with `max_episodes=` — each result costs a
+1. Start simple, then add criteria one at a time.
+2. Always cap broad searches with `max_episodes=`, since each result costs a
    partition read.
-3. **Prefer a subset** when you'll search the same slice repeatedly; see
+3. Prefer a subset when you'll search the same slice repeatedly; see
    [Data loading & subsets](loading.md).
-4. **Use the index-backed speaker methods** (`search_by_host`,
-   `search_by_guest`) for fast name lookups.
-5. **Add quality filters** (`max_overlap_prop_duration`) for research-grade
+4. Use the index-backed speaker methods (`search_by_host`, `search_by_guest`)
+   for fast name lookups.
+5. Add quality filters such as `max_overlap_prop_duration` for research-grade
    conversation data.
-6. **Gate on `has_turn_data`** before any turn-level work.
-7. **Reach for full-text search** only when you need it — it's a large,
+6. Gate on `has_turn_data` before any turn-level work.
+7. Reach for full-text search only when you need it, since it's a large,
    opt-in download.
 
 ## See also
 
-- [Data loading & subsets](loading.md) — fetch only the slice your study needs.
-- [Categories](categories.md) — the category taxonomy behind `category=`.
-- [Conversation analysis](conversation-analysis.md) — working with turns once
+- [Data loading & subsets](loading.md): fetch only the slice your study needs.
+- [Categories](categories.md): the category taxonomy behind `category=`.
+- [Conversation analysis](conversation-analysis.md): working with turns once
   you've found your episodes.
-- [API reference](../reference/sporcdataset.md) — full `SPORCDataset` signatures.
+- [API reference](../reference/sporcdataset.md): full `SPORCDataset` signatures.

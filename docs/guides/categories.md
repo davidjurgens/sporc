@@ -2,14 +2,14 @@
 
 SPoRC classifies every podcast with the official
 [Apple Podcasts categories](https://podcasters.apple.com/support/1691-apple-podcasts-categories).
-The scheme is a two-level hierarchy — a handful of **main categories**, each with
-its own **subcategories** — and you can search and filter on either level.
+The scheme is a two-level hierarchy of main categories, each with its own
+subcategories, and you can search and filter on either level.
 
 !!! note "Categories live in the metadata catalog"
     Category assignments come from the podcast catalog that ships with the
     metadata (~195 MB), so category searches and the helper functions below work
     without downloading any episode data. Only building the matching `Episode`
-    objects touches per-podcast partitions — see
+    objects touches per-podcast partitions; see
     [Data loading & subsets](loading.md).
 
 ## Category structure
@@ -199,9 +199,9 @@ episode.categories          # all category strings on the episode
 ```
 
 !!! note "Podcast lookup matches the exact title first"
-    `search_podcast` returns the podcast whose title matches exactly, falling
-    back to a substring match if there is no exact hit. Use the full title —
-    for example `"The NPR Politics Podcast"` or `"The Tim Ferriss Show"`.
+    `search_podcast` returns the podcast whose title matches exactly, and falls
+    back to a substring match if there is no exact hit. Use the full title, for
+    example `"The NPR Politics Podcast"` or `"The Tim Ferriss Show"`.
 
 ## Category-based analysis
 
@@ -253,14 +253,14 @@ for category in ["Education", "Science", "Business", "News"]:
     `overlap_prop_duration` is the fraction of episode time with more than one
     speaker talking at once, and `overlap_prop_turn_count` is the fraction of
     overlapping turns. Lower is cleaner (0.05–0.1 is good; 0.2+ is noisy). These
-    metrics only make sense for episodes with turn data — see
+    metrics only make sense for episodes with turn data; see
     [Conversation analysis](conversation-analysis.md).
 
 ## Working with a category slice
 
-By default `SPORCDataset()` is **lazy**: it downloads the metadata catalogs up
+By default `SPORCDataset()` is lazy: it downloads the metadata catalogs up
 front and fetches per-podcast partitions only as you touch them. That makes
-one-off category searches cheap without any explicit subset step — just bound
+one-off category searches cheap without any explicit subset step; just bound
 them with `max_episodes`.
 
 When you want to work with the same category slice repeatedly (or offline),
@@ -281,18 +281,18 @@ print(f"{len(episodes)} episodes in the pinned slice")
 ```
 
 `allow_downloads=False` guarantees the run never fetches anything outside the
-subset — a request for absent data raises instead of silently downloading. See
+subset; a request for absent data raises instead of silently downloading. See
 [Data loading & subsets](loading.md) for the full subset API.
 
 ## Best practices
 
-- **Use exact, case-sensitive names.** `"Education"`, not `"education"`. Verify
+- Use exact, case-sensitive names: `"Education"`, not `"education"`. Verify
   with `is_valid_category()` before searching.
-- **Bound broad searches.** Always pass `max_episodes` for category searches,
+- Bound broad searches. Always pass `max_episodes` for category searches,
   and `sampling_mode="random"` when you want a representative sample.
-- **Search the right level.** A main category is broad; a subcategory is
+- Search the right level. A main category is broad; a subcategory is
   targeted. Both work with `search_episodes(category=...)`.
-- **Pin recurring work.** Resolve a slice once and pass it as `subset` with
+- Pin recurring work. Resolve a slice once and pass it as `subset` with
   `allow_downloads=False` for reproducible, offline analysis.
 
 ## See also

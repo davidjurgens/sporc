@@ -16,8 +16,8 @@ pip install sporc
 Before your first load you must also:
 
 1. Accept the dataset terms on the
-   [dataset card](https://huggingface.co/datasets/blitt/SPoRC) — the dataset is
-   **gated**.
+   [dataset card](https://huggingface.co/datasets/blitt/SPoRC); the dataset is
+   gated.
 2. Authenticate locally so downloads can reach the gated files:
 
 ```bash
@@ -84,14 +84,14 @@ sporc = SPORCDataset()
 
 To control it:
 
-- **Pin a slice.** Pass `subset=` to fetch a fixed set of podcasts or episodes
+- Pin a slice: pass `subset=` to fetch a fixed set of podcasts or episodes
   up front so later access needs no network. It accepts a list of podcast ids or
   titles, a dict with `podcast_ids` / `podcast_titles` / `episode_ids`, or a path
   to a JSON / newline-delimited file.
-- **Go fully offline.** Add `allow_downloads=False` so the run never fetches
-  anything outside what is already local — absent data raises `DataNotLocalError`
+- Go fully offline: add `allow_downloads=False` so the run never fetches
+  anything outside what is already local. Absent data raises `DataNotLocalError`
   instead of downloading.
-- **Download everything.** Pass `lazy=False` to pull the whole corpus up front.
+- Download everything: pass `lazy=False` to pull the whole corpus up front.
 
 ```python
 # Pin two podcasts and forbid any further downloads
@@ -230,7 +230,7 @@ random_100 = sporc.search_episodes(max_episodes=100, sampling_mode="random")
 
 Two, via `sampling_mode`:
 
-- **`"first"`** (default): the first N matches encountered — reproducible and
+- **`"first"`** (default): the first N matches encountered, reproducible and
   fastest.
 - **`"random"`**: an unbiased random sample of N matches, better for research.
 
@@ -248,7 +248,7 @@ sporc.search_episodes(max_episodes=25, sampling_mode="random")
 
 ### Does sampling work with other search criteria?
 
-Yes — it composes with everything:
+Yes, it composes with everything:
 
 ```python
 quality_education = sporc.search_episodes(
@@ -274,7 +274,7 @@ for podcast in sporc.iterate_podcasts(max_podcasts=100, sampling_mode="random"):
 
 ### An episode has no turns. Is that a bug?
 
-Usually not — turn coverage is **partial**. Of the 1,124,058 episodes in SPoRC,
+Usually not. Turn coverage is partial. Of the 1,124,058 episodes in SPoRC,
 about 65% (731,101) have been diarized into speaker turns; the rest carry a
 transcript but no turns. An empty `turns` list is therefore normally a gap in
 the corpus rather than a fact about the episode.
@@ -290,7 +290,7 @@ else:
 ```
 
 !!! note "Roles are often unknown too"
-    Speaker diarization does not always recover who is host vs. guest — roughly
+    Speaker diarization does not always recover who is host vs. guest; roughly
     90% of turns carry `NO_INFERRED_ROLE`. Don't assume every turn has a resolved
     role; see [Conversation analysis](conversation-analysis.md).
 
@@ -377,7 +377,7 @@ sporc = SPORCDataset(parquet_dir="/path/to/parquet_layout")
 ### How do I analyze conversation across many episodes efficiently?
 
 Pin the podcasts you care about with `subset` so the run stays bounded, then
-iterate — gating on turn data as you go:
+iterate, gating on turn data as you go:
 
 ```python
 from sporc import SPORCDataset

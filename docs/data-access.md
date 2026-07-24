@@ -1,8 +1,8 @@
 # Working with the data
 
-The corpus is ~57 GB and **partitioned by podcast**, so the podcast is the unit
-of transfer. A median podcast is ~75 KB, which means the one-time ~195 MB of
-metadata catalogs dominates any study of less than a few thousand podcasts:
+The corpus is ~57 GB and partitioned by podcast, so the podcast is the unit
+of transfer. A median podcast is ~75 KB, so the one-time ~195 MB of
+metadata catalogs dominates any study of fewer than a few thousand podcasts:
 
 | Study size | Data fetched |
 |---|---|
@@ -42,9 +42,9 @@ sporc.prefetch(["The NPR Politics Podcast"])
 
 ## Selecting a subset efficiently
 
-**Selection is metadata-only.** These run off the already-downloaded catalogs and
-fetch nothing, so you can narrow to exactly the episodes you want and only then
-pull data:
+Selection is metadata-only. These methods run off the already-downloaded catalogs
+and fetch nothing, so you can narrow to exactly the episodes you want before
+pulling any data:
 
 ```python
 hits = sporc.filter_episodes_by_metrics(min_word_count=5000, limit=200)
@@ -53,26 +53,26 @@ hits = sporc.search_by_speaker_name("Ira Glass", role="host")
 sporc.prefetch({"episode_ids": [h["episode_id"] for h in hits]})
 ```
 
-Two things worth knowing:
+Two things are worth knowing:
 
-- **Pass `max_episodes` to `search_episodes`.** Matching is metadata-only, but
+- Pass `max_episodes` to `search_episodes`. Matching is metadata-only, but
   building each `Episode` reads that podcast's partition. `category="comedy"`
-  matches 62,622 episodes across 14,668 podcasts; `max_episodes=10` reads 10
+  matches 62,622 episodes across 14,668 podcasts, so `max_episodes=10` reads 10
   partitions instead.
-- **`filter_episodes_by_metrics` implies turn data.** `episode_metrics` is derived
-  from turns, so it only covers the diarized episodes and never wastes a fetch on
-  one without them.
+- `filter_episodes_by_metrics` implies turn data. `episode_metrics` is derived
+  from turns, so it only covers diarized episodes and never fetches one
+  without them.
 
 ## Time span
 
-SPoRC is a **two-month snapshot**: every episode was published between **1 May and
-30 June 2020** (median 28 May). It is not a longitudinal archive, so "trends over
-time" means trends across eight weeks — though the window straddles a sharp,
+SPoRC is a two-month snapshot: every episode was published between 1 May and
+30 June 2020 (median 28 May). It is not a longitudinal archive, so "trends over
+time" means trends across eight weeks. The window straddles a sharp,
 dateable event, which makes before/after designs unusually clean.
 
 ## Turn coverage
 
-Only **731,101 of 1,124,058 episodes (65%)** were diarized into speaker turns.
+Only 731,101 of 1,124,058 episodes (65%) were diarized into speaker turns.
 The rest have a transcript but are marked `SPEAKER_DATA_UNAVAILABLE` upstream. An
 empty `episode.turns` is therefore usually a gap in the corpus rather than a fact
 about the episode:
@@ -94,7 +94,7 @@ full-text index when present, and otherwise scan the turn partitions on disk:
 | 5,000 episodes (83 MB) | 5.4s | " |
 | all 78M turns | impractical | 1.7s open, ~5s/query (50s cold) |
 
-The index earns its 26 GB only for whole-corpus work; below ~5,000 episodes,
+The index is worth its 26 GB only for whole-corpus work. Below ~5,000 episodes,
 scanning beats its cold start alone.
 
 ```python
@@ -106,12 +106,12 @@ results = sporc.concordance("like", context_words=5)         # KWIC
 ```
 
 Without the index, `mode="fts"` ranks by term frequency rather than BM25 and
-covers only local data; the package warns, naming how many podcasts it scanned.
+covers only local data. The package warns and reports how many podcasts it scanned.
 
 ## Building teaching subsets
 
-`scripts/make_subset.py` cuts a self-contained mini-SPoRC, filtering the catalogs
-*and* episode partitions together so counts, searches, and statistics are all
+`scripts/make_subset.py` cuts a self-contained mini-SPoRC. It filters the catalogs
+and episode partitions together, so counts, searches, and statistics are all
 true of the subset:
 
 ```bash

@@ -1,10 +1,10 @@
 # Phonetics
 
-SPoRC ships no word timings. Its acoustic data is six per-turn means —
+SPoRC ships no word timings. Its acoustic data is six per-turn means:
 `mfcc1..4_sma3_mean`, `f0_semitone_from_27_5hz_sma3nz_mean`, and
-`f1_frequency_sma3nz_mean` — each averaged over a turn that spans many words, and
-there is no F2 at all. Vowel-level questions (the caught/cot merger, vowel-space
-plots, formant trajectories) cannot be answered from those fields.
+`f1_frequency_sma3nz_mean`. Each is averaged over a turn that spans many words,
+and there is no F2 at all. Vowel-level questions (the caught/cot merger,
+vowel-space plots, formant trajectories) cannot be answered from those fields.
 
 They *can* be answered from the audio the corpus points at. Every turn carries an
 `mp3_url` plus its own `start_time` and `end_time`, which is enough to fetch that
@@ -38,9 +38,9 @@ python -c "import nltk; nltk.download('cmudict')"
 
 ## The high-level path
 
-`find_word_tokens()` runs the whole chain — find turns containing a word, fetch
-each turn's audio, align, and measure the stressed vowel — and
-`lobanov_normalize()` turns the raw formants into per-speaker z-scores.
+`find_word_tokens()` runs the whole chain: find turns containing a word, fetch
+each turn's audio, align, and measure the stressed vowel. `lobanov_normalize()`
+turns the raw formants into per-speaker z-scores.
 
 ```python
 from sporc import SPORCDataset
@@ -57,10 +57,10 @@ Wells lexical set (`"THOUGHT"`/`"LOT"`/`None`, fixed by the word's history rathe
 than by its measured or dictionary vowel), `f1`/`f2`/`f3`, the vowel duration,
 and the inferred speaker, episode, and podcast.
 
-!!! tip "The lexical set is the point"
+!!! tip "Classify by the lexical set, not the dictionary vowel"
     Whether a word belongs to the caught (`THOUGHT`) or cot (`LOT`) class is a
     property of the word's history, not of how anyone pronounces it. `caught`
-    is `K AA1 T` in CMUdict — the merger is already in the dictionary — so
+    is `K AA1 T` in CMUdict (the merger is already in the dictionary), so
     classifying tokens by their dictionary vowel would answer the question
     before measuring anything. `lexical_set(word)` returns the fixed
     etymological class; the formants are what tell you whether a given speaker
@@ -68,8 +68,8 @@ and the inferred speaker, episode, and podcast.
 
 ## The lower-level steps
 
-If you want the individual stages — for example to plot intermediate timings, or
-to work with turns you already have in hand — the same chain is exposed as
+If you want the individual stages, for example to plot intermediate timings or
+to work with turns you already have in hand, the same chain is exposed as
 separate functions.
 
 ```python
@@ -114,12 +114,12 @@ redirects that ffmpeg does not always handle).
 
 ## Caveats that matter for anything you publish
 
-!!! warning "Only the turn is downloaded — but alignment, not the download, is the cost"
+!!! warning "Only the turn is downloaded, but alignment is the real cost"
     `fetch_turn_audio` makes ffmpeg seek into the remote mp3 with an HTTP range
     request, so a turn costs ~1–2 s and a few hundred KB rather than a 100 MB
     episode download. Locating a word, however, means word-aligning the turn's
-    *whole* text against its whole audio, and the CTC forward pass runs at
-    roughly **0.45x realtime on CPU** — cost scales with the turn, not with the
+    whole text against its whole audio, and the CTC forward pass runs at
+    roughly 0.45x realtime on CPU. Cost scales with the turn, not with the
     target word. Turns run long (median ~64 s for a common word, mean ~160 s,
     longest in the corpus 3,240 s ≈ 24 minutes to align). `find_word_tokens`
     therefore skips turns longer than `max_turn_duration=30` seconds by default
@@ -130,26 +130,26 @@ redirects that ffmpeg does not always handle).
 !!! warning "The audio is external and mutable"
     `mp3_url` points at the publisher's CDN, not at HuggingFace. Links rot, and
     some hosts (podtrac, libsyn) return 404 unless their redirects are resolved
-    first — which `fetch_turn_audio` does via `resolve_audio_url`.
-    `find_word_tokens(..., skip_errors=True)` (the default) simply skips turns
+    first, which `fetch_turn_audio` does via `resolve_audio_url`.
+    `find_word_tokens(..., skip_errors=True)` (the default) skips turns
     whose audio is unreachable.
 
 !!! warning "A speaker is an inferred name"
-    `lobanov_normalize` groups tokens by inferred speaker name — matched across
+    `lobanov_normalize` groups tokens by inferred speaker name, matched across
     episodes and across podcasts, so one person on three shows is one speaker
-    with three times the tokens — and it **drops** tokens labelled
+    with three times the tokens. It drops tokens labelled
     `NO_INFERRED_SPEAKER` (the corpus's "attribution found nobody" marker, and
     its single most common speaker value) and raw `SPEAKER_00` diarization
     labels (which are per-episode and identify no one across episodes) rather
     than pooling them. Pooling the placeholder would average dozens of
     unrelated vocal tracts into one "voice." Two distinct people who share a
-    name still pool — SPoRC has no canonical speaker id today. Because tokens
-    accumulate per name, probe more *words* rather than more podcasts to reach
-    `min_tokens`.
+    name still pool, since SPoRC has no canonical speaker id today. Because
+    tokens accumulate per name, probe more words rather than more podcasts to
+    reach `min_tokens`.
 
-!!! danger "`estimate_word_audio()` is not this"
+!!! danger "Don't use `estimate_word_audio()` for phonetics"
     `SPORCDataset.estimate_word_audio()` interpolates word timing from character
-    offsets. It is deprecated for phonetic use — it does not align anything, so
+    offsets. It is deprecated for phonetic use; it does not align anything, so
     its boundaries are not accurate enough to measure a vowel from. Use the
     `sporc.phonetics` chain instead.
 

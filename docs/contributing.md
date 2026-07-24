@@ -1,7 +1,6 @@
 # Contributing to SPoRC
 
-Thank you for your interest in contributing to the SPoRC package! This guide will
-help you get set up and land a change.
+This guide covers getting set up and landing a change.
 
 ## Getting started
 
@@ -188,7 +187,7 @@ mkdocs build            # full build into ./site (what Read the Docs runs)
 ```
 
 Run `mkdocs build` before submitting doc changes and check the output: the
-`validation:` config in `mkdocs.yml` surfaces broken cross-references and missing
+`validation:` config in `mkdocs.yml` reports broken cross-references and missing
 pages as warnings. (`mkdocs build --strict` turns every warning into an error,
 including cosmetic mkdocstrings/griffe notes about docstrings that lack type
 annotations, so it is stricter than Read the Docs itself.)
@@ -279,9 +278,8 @@ Before releasing, confirm that all tests pass, the docs build cleanly
 - **GitHub Issues**: for bug reports and feature requests
 - **GitHub Discussions**: for questions and general discussion
 
-New contributors are welcome. Don't hesitate to ask questions in issues or
-discussions, request reviews for learning, and start with small changes such as
-documentation.
+New contributors are welcome. Ask questions in issues or discussions, request
+reviews to learn, and start with small changes like documentation.
 
 ## Code of conduct
 
@@ -289,6 +287,3 @@ We are committed to providing a welcoming and inclusive environment for all
 contributors. Please be respectful, use welcoming language, be collaborative,
 focus on what is best for the community, and show empathy toward other community
 members.
-
-Thank you for contributing to SPoRC! Your contributions help make this project
-better for everyone in the research community.
