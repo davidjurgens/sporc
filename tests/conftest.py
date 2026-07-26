@@ -393,12 +393,18 @@ def mock_parquet_backend(sample_speaker_index_df, sample_episode_metrics_df):
     backend._meta_dir = "/fake/data/metadata"
     backend._source = LocalDataSource("/fake/data")
     backend._speaker_index_df = None
+    backend._host_index_df = None
+    backend._host_episode_index_df = None
+    backend._guest_index_df = None
+    backend._guest_episode_index_df = None
     backend._episode_metrics_df = None
     backend._search_db_con = None
     backend._podcast_df = None
     backend._episode_df = None
+    backend._episode_records_cache = None
     backend._num_podcasts = 0
     backend._num_episodes = 0
+    backend._restrict = None
     backend._cache_validated = False
     backend._missing_turns_warned = set()
     backend._turn_partition_exists = {}
@@ -407,6 +413,7 @@ def mock_parquet_backend(sample_speaker_index_df, sample_episode_metrics_df):
     backend._has_text_db = False
     backend._episode_partition_cache = OrderedDict()
     backend._tree_cache = OrderedDict()
+    backend._parquet_file_cache = OrderedDict()
     backend.load_audio_features = False
     # Catalog lookups. Empty rather than absent: methods that consult them
     # should return nothing, not raise AttributeError, and a fixture that

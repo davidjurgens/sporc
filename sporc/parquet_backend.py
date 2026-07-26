@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import pickle
+import random
 import re
 import time
 import warnings
@@ -45,6 +46,15 @@ _EPISODE_PARTITION_CACHE_SIZE = 8
 # because two entries already cover the common case of turns plus acoustics for
 # the podcast being iterated.
 _TREE_CACHE_SIZE = 4
+
+# Open ``pq.ParquetFile`` handles held in memory, keyed on path. Constructing
+# one parses the file footer -- about 12 ms against a packed part file, versus
+# 0.1 ms for the row-group read itself -- so rebuilding a handle per call made
+# the footer parse dominate. Neighbouring podcasts share a part file (the parts
+# are ordered by category), so caching the handle lets a whole part's worth of
+# podcasts reuse a single footer parse. Bounded because each handle keeps a file
+# descriptor open.
+_PARQUET_HANDLE_CACHE_SIZE = 16
 
 # Everything search_episodes() knows how to filter on. Anything else is a
 # mistake on the caller's part and is refused rather than ignored.
@@ -85,6 +95,8 @@ class ParquetBackend:
             OrderedDict()
         # (tree, podcast_id) -> row group; see _read_tree.
         self._tree_cache: "OrderedDict[Any, Any]" = OrderedDict()
+        # path -> open pq.ParquetFile handle; see _open_parquet.
+        self._parquet_file_cache: "OrderedDict[str, Any]" = OrderedDict()
 
         if not os.path.isdir(self._meta_dir):
             raise DatasetAccessError(
@@ -95,8 +107,19 @@ class ParquetBackend:
         # Lazy-loaded DataFrames (only materialized when search/stats are used)
         self._podcast_df = None
         self._episode_df = None
+        # The full episode catalog converted to row dicts, cached because
+        # iterate_episodes()/get_all_episodes() ask for it repeatedly and
+        # turning ~1.1M rows into dicts is the costly part; see
+        # _all_episode_records. Reflects the current restrict view, so
+        # restrict_to_podcasts clears it.
+        self._episode_records_cache: Optional[List[Dict[str, Any]]] = None
         self._num_podcasts: int = 0
         self._num_episodes: int = 0
+
+        # When set, the bulk-access surface (get_all_podcast_ids, unfiltered
+        # search_episodes, the num_* counts) is limited to these podcast ids.
+        # Used to pin a dataset to a prefetched subset; see restrict_to_podcasts.
+        self._restrict: Optional[frozenset] = None
 
         # Lazy-loaded indexes for search / metrics
         self._speaker_index_df = None
@@ -431,6 +454,24 @@ class ParquetBackend:
             self._shard_map = ShardMap(path)
         return self._shard_map
 
+    def _open_parquet(self, path: str):
+        """
+        Return a cached ``pq.ParquetFile`` for *path*, opening one on a miss.
+
+        The handle parses the footer on construction, which is the expensive
+        part of a row-group read; caching it lets every podcast packed into the
+        same part file share one parse. See ``_PARQUET_HANDLE_CACHE_SIZE``.
+        """
+        handle = self._parquet_file_cache.get(path)
+        if handle is not None:
+            self._parquet_file_cache.move_to_end(path)
+            return handle
+        handle = pq.ParquetFile(path)
+        self._parquet_file_cache[path] = handle
+        while len(self._parquet_file_cache) > _PARQUET_HANDLE_CACHE_SIZE:
+            self._parquet_file_cache.popitem(last=False)
+        return handle
+
     def _read_tree(self, tree: str, podcast_id: str,
                    columns: Optional[List[str]] = None):
         """
@@ -479,8 +520,8 @@ class ParquetBackend:
             path = self._source.path(rel)
             if path is None:
                 return None
-            table = pq.ParquetFile(path).read_row_group(loc.row_group,
-                                                        columns=columns)
+            table = self._open_parquet(path).read_row_group(loc.row_group,
+                                                            columns=columns)
         if table is None:
             return None
 
@@ -548,14 +589,46 @@ class ParquetBackend:
         """Whether *podcast_id* is in the catalog."""
         return podcast_id in self._pid_to_idx
 
+    def restrict_to_podcasts(self, podcast_ids: Optional[List[str]]) -> None:
+        """
+        Limit the corpus view to *podcast_ids* (or lift the limit with None).
+
+        Afterwards the bulk-access surface -- :meth:`get_all_podcast_ids`,
+        :meth:`search_episodes` with no explicit podcast filter, and the
+        ``num_podcasts`` / ``num_episodes`` counts -- reports only these
+        podcasts. Direct lookups by id (:meth:`get_podcast`,
+        :meth:`get_episode_by_id`) still reach the whole catalog.
+
+        Ids not in the catalog are dropped. Used to pin a dataset to a
+        prefetched subset so that iterating it stays inside the slice on disk
+        rather than walking the full catalog -- which, on a lazy source, would
+        download the corpus.
+        """
+        # The cached record list reflects a particular view of the catalog, so
+        # changing the restriction invalidates it.
+        self._episode_records_cache = None
+        if podcast_ids is None:
+            self._restrict = None
+            self._num_podcasts = len(self._pid_to_idx)
+            self._num_episodes = len(self._eid_to_idx)
+            return
+        restrict = frozenset(podcast_ids) & self._pid_to_idx.keys()
+        self._restrict = restrict
+        self._num_podcasts = len(restrict)
+        self._num_episodes = sum(
+            len(self._pid_to_ep_idxs.get(pid, ())) for pid in restrict)
+
     def get_all_podcast_ids(self) -> List[str]:
         """
         Return every podcast_id in catalog order.
 
         Served from the in-memory index, which is always populated (whether
         built from Parquet or restored from cache), so this never needs the
-        heavier podcast DataFrame.
+        heavier podcast DataFrame. Honours an active
+        :meth:`restrict_to_podcasts` limit.
         """
+        if self._restrict is not None:
+            return [pid for pid in self._pid_to_idx if pid in self._restrict]
         return list(self._pid_to_idx.keys())
 
     def get_podcasts_by_category(self, category: str) -> List[str]:
@@ -676,7 +749,45 @@ class ParquetBackend:
     # ------------------------------------------------------------------
     # Search / filter
     # ------------------------------------------------------------------
-    def search_episodes(self, **criteria) -> List[Dict[str, Any]]:
+    def _restricted_episode_df(self):
+        """The episode catalog DataFrame, narrowed to an active restriction."""
+        self._ensure_episode_df()
+        df = self._episode_df
+        if self._restrict is not None:
+            df = df[df["podcast_id"].isin(self._restrict)]
+        return df
+
+    def _all_episode_records(self) -> List[Dict[str, Any]]:
+        """
+        The whole (restricted) episode catalog as row dicts, converted once.
+
+        Cached because the unfiltered fetch is the common repeated call and the
+        ``to_dict`` of the full catalog is the expensive part; the cache is
+        cleared whenever the restriction changes. See restrict_to_podcasts.
+        """
+        cached = self._episode_records_cache
+        if cached is not None:
+            return cached
+        records = self._restricted_episode_df().to_dict(orient="records")
+        self._episode_records_cache = records
+        return records
+
+    @staticmethod
+    def _sample_records(records: List[Dict[str, Any]],
+                        max_results: Optional[int],
+                        sampling_mode: str) -> List[Dict[str, Any]]:
+        """Apply a row cap to an already-materialized record list."""
+        if max_results is None:
+            return records
+        if sampling_mode == "first":
+            return records[:max_results]
+        if len(records) <= max_results:
+            return list(records)
+        return random.sample(records, max_results)
+
+    def search_episodes(self, *, max_results: Optional[int] = None,
+                        sampling_mode: str = "first",
+                        **criteria) -> List[Dict[str, Any]]:
         """
         Filter the in-memory episode catalog by various criteria.
 
@@ -685,6 +796,13 @@ class ParquetBackend:
             host_name, guest_name, category, subcategory, language,
             podcast_name, podcast_id,
             min_overlap_prop_duration, max_overlap_prop_duration.
+
+        Args:
+            max_results: Cap on the number of rows returned. Applied to the
+                DataFrame before it is turned into dicts, so a bounded call does
+                not materialize the whole catalog to hand back a handful of rows.
+            sampling_mode: ``"first"`` takes the head; anything else takes a
+                random sample of ``max_results`` rows.
 
         Raises:
             TypeError: on a criterion that is not one of those. Unknown keys
@@ -699,11 +817,26 @@ class ParquetBackend:
             # The commonest wrong guess is a row cap, and naming only the
             # filters would leave someone who passed limit= reading a list of
             # thirteen keys none of which is the answer.
-            if unknown & {"limit", "n", "top_k", "count", "max_results",
+            if unknown & {"limit", "n", "top_k", "count",
                           "num_episodes"}:
                 msg += (". To cap the number of episodes returned, "
                         "use max_episodes=")
             raise TypeError(msg)
+
+        # No filter is the hot path -- iterate_episodes()/get_all_episodes() take
+        # it every call. Serve it from the converted-once record cache, but only
+        # build that cache when the whole list is actually needed: a bounded
+        # "first" request slices the DataFrame instead, so a fresh dataset does
+        # not convert 1.1M rows to return ten.
+        if not criteria:
+            cached = self._episode_records_cache
+            if cached is not None:
+                return self._sample_records(cached, max_results, sampling_mode)
+            if sampling_mode == "first" and max_results is not None:
+                df = self._restricted_episode_df().head(max_results)
+                return df.to_dict(orient="records")
+            return self._sample_records(
+                self._all_episode_records(), max_results, sampling_mode)
 
         self._ensure_episode_df()
         df = self._episode_df
@@ -758,6 +891,20 @@ class ParquetBackend:
             df = df[df["overlap_prop_duration"] >= criteria["min_overlap_prop_duration"]]
         if "max_overlap_prop_duration" in criteria:
             df = df[df["overlap_prop_duration"] <= criteria["max_overlap_prop_duration"]]
+
+        # Keep every result inside a pinned subset, so iterating the dataset
+        # never wanders out of the slice on disk. See restrict_to_podcasts.
+        if self._restrict is not None:
+            df = df[df["podcast_id"].isin(self._restrict)]
+
+        # Bound before converting: a category match can be tens of thousands of
+        # rows, and "first" only needs the head. "random" must see the whole
+        # match set to sample from, so it slices with DataFrame.sample.
+        if max_results is not None and len(df) > max_results:
+            if sampling_mode == "first":
+                df = df.head(max_results)
+            else:
+                df = df.sample(n=max_results)
 
         return df.to_dict(orient="records")
 
@@ -839,6 +986,11 @@ class ParquetBackend:
         self._ensure_episode_df()
         pc = self._podcast_df
         ec = self._episode_df
+
+        # A pinned dataset reports on its slice, so its stats match its counts.
+        if self._restrict is not None:
+            pc = pc[pc["podcast_id"].isin(self._restrict)]
+            ec = ec[ec["podcast_id"].isin(self._restrict)]
 
         total_podcasts = len(pc)
         total_episodes = len(ec)
@@ -1384,14 +1536,15 @@ class ParquetBackend:
             if not self._source.exists_locally(rel):
                 return
             path = os.path.join(self._source.root, rel)
-            yield pq.ParquetFile(path).read_row_group(loc.row_group)
+            yield self._open_parquet(path).read_row_group(loc.row_group)
             return
 
         for part in sm.parts("turns_text"):
             rel = sm.relpath("turns_text", part)
             if not self._source.exists_locally(rel):
                 continue
-            yield pq.ParquetFile(os.path.join(self._source.root, rel)).read()
+            yield self._open_parquet(
+                os.path.join(self._source.root, rel)).read()
 
     def _scan_turns(
         self,

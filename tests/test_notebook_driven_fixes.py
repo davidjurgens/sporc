@@ -25,14 +25,28 @@ from conftest import EID_WITH_TURNS, PID_NO_TURNS, PID_WITH_TURNS
 
 @pytest.fixture
 def count_partition_reads(monkeypatch):
-    """Count real opens of an episodes partition file."""
+    """
+    Count real row-group reads of an episodes partition file.
+
+    Counts reads rather than ``ParquetFile`` opens: the backend caches open
+    handles (one footer parse per part file), so an evicted podcast is re-read
+    through the cached handle without reopening it. The read is what these tests
+    care about, so that is what is counted.
+    """
     calls = []
     real = pq.ParquetFile
 
     def counting(path, *a, **kw):
+        handle = real(path, *a, **kw)
         if "episodes" in str(path):
-            calls.append(str(path))
-        return real(path, *a, **kw)
+            real_read_row_group = handle.read_row_group
+
+            def counting_read_row_group(*ra, **rkw):
+                calls.append(str(path))
+                return real_read_row_group(*ra, **rkw)
+
+            handle.read_row_group = counting_read_row_group
+        return handle
 
     monkeypatch.setattr(pb_module.pq, "ParquetFile", counting)
     return calls
@@ -182,6 +196,63 @@ class TestTreeRowGroupCache:
 
         assert backend._read_tree("turns_text", PID_NO_TURNS) is None
         assert ("turns_text", PID_NO_TURNS) not in backend._tree_cache
+
+
+@pytest.mark.integration
+class TestParquetHandleCache:
+    """
+    Constructing pq.ParquetFile parses the file footer -- ~12 ms against a
+    packed part, versus 0.1 ms for the row-group read -- so a handle rebuilt per
+    call made the footer parse dominate. The cache keeps one handle per part.
+    """
+
+    def _episodes_part(self, layout):
+        return os.path.join(layout, "episodes", "part-000-000.parquet")
+
+    def test_same_path_reuses_one_handle(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        path = self._episodes_part(tmp_parquet_layout)
+
+        first = backend._open_parquet(path)
+        second = backend._open_parquet(path)
+
+        assert first is second
+
+    def test_neighbouring_podcasts_share_one_footer_parse(
+        self, tmp_parquet_layout, monkeypatch
+    ):
+        # Both fixture podcasts live in the same episodes part, as neighbours in
+        # the category ordering do corpus-wide. Reading each podcast's partition
+        # must parse that part's footer once between them, not once apiece.
+        calls = []
+        real = pq.ParquetFile
+
+        def counting(path, *a, **kw):
+            if "episodes" in str(path):
+                calls.append(str(path))
+            return real(path, *a, **kw)
+
+        monkeypatch.setattr(pb_module.pq, "ParquetFile", counting)
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        backend._read_podcast_episodes_partition(PID_WITH_TURNS)
+        backend._read_podcast_episodes_partition(PID_NO_TURNS)
+
+        assert len(calls) == 1, (
+            f"expected one footer parse for the shared part, got {len(calls)}")
+
+    def test_cache_is_bounded(self, tmp_parquet_layout, monkeypatch):
+        # Each handle keeps a file descriptor open, so the cache is bounded
+        # rather than left to grow over a whole-corpus scan.
+        monkeypatch.setattr(pb_module, "_PARQUET_HANDLE_CACHE_SIZE", 1)
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        backend._open_parquet(self._episodes_part(tmp_parquet_layout))
+        backend._open_parquet(
+            os.path.join(tmp_parquet_layout, "metadata",
+                         "podcast_catalog.parquet"))
+
+        assert len(backend._parquet_file_cache) <= 1
 
 
 @pytest.mark.integration

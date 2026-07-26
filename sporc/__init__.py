@@ -43,7 +43,7 @@ from .constants import (
     get_popular_subcategories,
 )
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 __author__ = "David Jurgens"
 __email__ = "jurgens@umich.edu"
 

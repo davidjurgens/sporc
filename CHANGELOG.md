@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.1.4
+
+`SPORCDataset(subset=...)` now pins the dataset to the fetched slice. Before, it
+prefetched the subset but left the backend reporting the whole catalog (228,099
+podcasts), so `iterate_episodes()`, `get_all_podcasts()` and the counts walked
+straight out of the slice on disk -- raising `DataNotLocalError` with downloads
+off, or quietly pulling the rest of the corpus with them on. Iterating,
+counting, searching and statistics now see only the subset; direct lookups by
+id still reach the whole catalog. Bare `prefetch()` is unchanged (it only
+downloads); the new backend method `restrict_to_podcasts()` does the pinning,
+and `prefetch()` now also returns the resolved `podcast_ids`.
+
+Bounded episode iteration no longer materializes the whole catalog.
+`iterate_episodes(max_episodes=N)` and `search_episodes(..., max_episodes=N)`
+asked the backend for every matching row -- up to the full ~1.1M-episode catalog
+as Python dicts -- and only then sliced off `N`. The cap and sampling mode are
+now pushed into the backend, which applies them to the DataFrame before the
+conversion, so a bounded call pays for `N` rows rather than the whole catalog.
+The unfiltered catalog is also converted once and cached (cleared when a
+`subset` restriction changes), so repeated full passes reuse it. And
+`search_episodes()` with no `max_episodes` now warns before building in bulk,
+matching the guard `get_all_episodes()` and `get_all_podcasts()` already carry.
+
+Reading a podcast's partitions is faster. Every read rebuilt a
+`pq.ParquetFile`, which reparses the file footer -- about 12 ms against a packed
+part file, versus 0.1 ms for the row-group read itself, so the footer parse
+dominated. Open handles are now cached (one footer parse per part file), so the
+podcasts packed into a shared part -- neighbours in the category ordering --
+reuse a single parse.
+
+The base install is leaner. `pip install sporc` now pulls only
+`huggingface_hub` and `pyarrow` -- the two libraries the core package actually
+imports. `pandas`, `numpy`, and `requests` were listed as core dependencies but
+are used only inside `sporc/phonetics.py`, which imports them lazily and sits
+behind the optional `phonetics` extra, so they have moved there (`pip install
+sporc[phonetics]` is now self-sufficient). `tqdm` backed the build scripts in
+`scripts/`, never the shipped package, so it moved to the `dev` extra alongside
+`pandas`/`numpy`, which the test suite needs. If you relied on pandas or numpy
+coming along with a bare `pip install sporc`, add them explicitly. Nothing in
+the SPORC API changed.
+
+The minimum Python is now 3.9 (was 3.8). The `huggingface_hub>=1.2.0` floor
+already required 3.9, so `>=3.8` never actually resolved -- Python 3.8 is also
+past end-of-life.
+
 ## 1.1.3
 
 Diarized guests are a shipped index, so the tutorial subset build no longer

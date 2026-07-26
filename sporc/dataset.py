@@ -240,7 +240,10 @@ class SPORCDataset:
                     network. Accepts a list of podcast ids or titles, a dict
                     with ``podcast_ids`` / ``podcast_titles`` / ``episode_ids``
                     keys, or a path to a JSON or newline-delimited text file
-                    holding either.
+                    holding either. The dataset is then pinned to this slice:
+                    iterating, counting and searching see only these podcasts,
+                    so a run stays inside the data on disk. Direct lookups by id
+                    still reach the whole catalog.
             load_audio_features: Join acoustic features onto every turn.
                           Off by default: the acoustics are a separate 14.5 GB
                           tree, and reading a podcast's turns would pull its
@@ -315,7 +318,12 @@ class SPORCDataset:
         self._loaded = True
 
         if subset is not None:
-            self.prefetch(subset)
+            info = self.prefetch(subset)
+            # Pin the dataset to the fetched slice: without this the backend
+            # still reports the whole catalog, so iterate_episodes() and friends
+            # walk out of the subset -- raising DataNotLocalError with downloads
+            # off, or quietly pulling the rest of the corpus with them on.
+            self._parquet_backend.restrict_to_podcasts(info["podcast_ids"])
 
     # ------------------------------------------------------------------
     # Prefetching
@@ -337,11 +345,16 @@ class SPORCDataset:
 
         Returns:
             Dict with ``podcasts`` (count resolved), ``files`` (count now
-            available locally) and ``unresolved`` (entries not found).
+            available locally), ``podcast_ids`` (the resolved ids) and
+            ``unresolved`` (entries not found).
 
             ``files`` is not a download count: it counts partitions present
             afterwards, so already-cached files and a local ``parquet_dir``
             both report nonzero without fetching anything.
+
+            Note that ``prefetch()`` only downloads; it does not narrow the
+            dataset's view of the corpus. Pass ``subset=`` to the constructor
+            to both fetch a slice and pin the dataset to it.
 
         Raises:
             ValueError: if the subset resolves to no podcasts at all.
@@ -441,7 +454,8 @@ class SPORCDataset:
 
         logger.info("Prefetch complete: %d podcast(s), %d file(s)",
                     len(pids), files)
-        return {"podcasts": len(pids), "files": files, "unresolved": unresolved}
+        return {"podcasts": len(pids), "files": files,
+                "podcast_ids": pids, "unresolved": unresolved}
 
     # ------------------------------------------------------------------
     # Public search / retrieval API
@@ -490,18 +504,22 @@ class SPORCDataset:
             work: a bare category search matches tens of thousands of episodes
             across thousands of podcasts.
         """
-        rows = self._parquet_backend.search_episodes(**criteria)
+        # The cap and sampling are pushed into the backend, which applies them
+        # to the DataFrame before converting to dicts -- so a bounded search
+        # neither materializes the whole match set nor builds (and, on a lazy
+        # source, downloads) more partitions than asked for.
+        rows = self._parquet_backend.search_episodes(
+            max_results=max_episodes, sampling_mode=sampling_mode, **criteria)
 
-        # Cut the candidate rows down before building anything: each build
-        # reads (and on a lazy source, downloads) a partition, so applying the
-        # limit afterwards would fetch ~1 GB to return ten episodes.
-        if max_episodes is not None and sampling_mode != "first":
-            rows = random.sample(rows, len(rows))
+        # An unbounded search can match most of the corpus; building each row
+        # reads a partition, so warn before doing it in bulk -- the same guard
+        # get_all_episodes() and get_all_podcasts() carry.
+        if max_episodes is None:
+            self._warn_if_whole_corpus(
+                len(rows), "search_episodes()", "max_episodes=N")
 
         episodes = []
         for row in rows:
-            if max_episodes is not None and len(episodes) >= max_episodes:
-                break
             try:
                 ep = self._parquet_backend.build_episode_object(
                     row.get("podcast_id", ""), row.get("episode_id", ""),
@@ -627,12 +645,11 @@ class SPORCDataset:
             max_episodes: Maximum number of episodes to yield (None for all)
             sampling_mode: How to sample episodes ("first" or "random")
         """
-        rows = self._parquet_backend.search_episodes()
-        if max_episodes and len(rows) > max_episodes:
-            if sampling_mode == "first":
-                rows = rows[:max_episodes]
-            else:
-                rows = random.sample(rows, max_episodes)
+        # Bound in the backend: a "first" limit slices the catalog before it is
+        # converted to dicts, so iterate_episodes(max_episodes=10) no longer
+        # materializes the entire catalog just to yield the first ten.
+        rows = self._parquet_backend.search_episodes(
+            max_results=max_episodes, sampling_mode=sampling_mode)
         for row in rows:
             try:
                 ep = self._parquet_backend.build_episode_object(

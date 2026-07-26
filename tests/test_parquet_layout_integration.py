@@ -202,6 +202,86 @@ class TestSearchEpisodesFetching:
         assert len(ds.search_episodes(category="comedy")) == 2
 
 
+class TestEpisodeCatalogConversionIsBounded:
+    """
+    Regression: iterate_episodes/search_episodes turned the WHOLE episode
+    catalog into row dicts before applying max_episodes, so a bounded call paid
+    the full-catalog conversion (~1.1M dicts on the real corpus) to hand back a
+    handful of rows.
+    """
+
+    def test_bounded_first_does_not_build_the_record_cache(
+        self, tmp_parquet_layout
+    ):
+        # A "first" limit slices the DataFrame; it must not materialize (nor
+        # cache) the whole catalog as dicts.
+        backend = ParquetBackend(tmp_parquet_layout)
+        rows = backend.search_episodes(max_results=1)
+        assert len(rows) == 1
+        assert backend._episode_records_cache is None
+
+    def test_unbounded_fetch_is_converted_once_and_cached(
+        self, tmp_parquet_layout
+    ):
+        backend = ParquetBackend(tmp_parquet_layout)
+        first = backend.search_episodes()
+        assert backend._episode_records_cache is not None
+        # Second call reuses the cached list rather than reconverting.
+        assert backend.search_episodes() is first
+
+    def test_cached_records_serve_later_bounded_calls(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.search_episodes()                       # populate the cache
+        rows = backend.search_episodes(max_results=2)   # slice of the cache
+        assert len(rows) == 2
+
+    def test_restriction_change_invalidates_the_cache(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert len(backend.search_episodes()) == 3
+        assert backend._episode_records_cache is not None
+
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        assert backend._episode_records_cache is None
+        # The refilled cache reflects the slice, not the stale full catalog.
+        assert {r["podcast_id"] for r in backend.search_episodes()} == {
+            PID_WITH_TURNS}
+
+        backend.restrict_to_podcasts(None)
+        assert len(backend.search_episodes()) == 3
+
+    def test_iterate_episodes_bounded_does_not_materialize_all(
+        self, tmp_parquet_layout
+    ):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        got = list(ds.iterate_episodes(max_episodes=1))
+        assert len(got) == 1
+        assert ds._parquet_backend._episode_records_cache is None
+
+    def test_random_sample_respects_the_cap(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        rows = backend.search_episodes(max_results=2, sampling_mode="random")
+        assert len(rows) == 2
+
+
+class TestUnboundedSearchWarns:
+    """search_episodes() with no cap can match most of the corpus; it should
+    warn before building, the same as get_all_episodes()/get_all_podcasts()."""
+
+    def test_unbounded_search_warns(self, tmp_parquet_layout, caplog):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        ds._WHOLE_CORPUS_WARN_AT = 2   # fixture has 3 episodes
+        with caplog.at_level("WARNING"):
+            ds.search_episodes()
+        assert any("search_episodes()" in r.message for r in caplog.records)
+
+    def test_bounded_search_does_not_warn(self, tmp_parquet_layout, caplog):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        ds._WHOLE_CORPUS_WARN_AT = 2
+        with caplog.at_level("WARNING"):
+            ds.search_episodes(max_episodes=1)
+        assert not any("about to build" in r.message for r in caplog.records)
+
+
 class TestSearchWithoutIndex:
     """Text search must work on a subset, which has no 26GB FTS index."""
 
@@ -298,6 +378,100 @@ class TestPrefetchResolution:
         ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
         with pytest.raises(ValueError, match="resolved to no podcasts"):
             ds.prefetch(["ffffffffffff"])
+
+    def test_prefetch_returns_resolved_ids(self, tmp_parquet_layout):
+        # The constructor's subset= pinning reads these back, so they have to be
+        # in the return value.
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        out = ds.prefetch([PID_WITH_TURNS])
+        assert out["podcast_ids"] == [PID_WITH_TURNS]
+
+    def test_bare_prefetch_does_not_pin(self, tmp_parquet_layout):
+        # prefetch() only downloads; it must not narrow the view. Pinning is the
+        # constructor's subset= job.
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        ds.prefetch([PID_WITH_TURNS])
+        assert ds._parquet_backend.num_podcasts == 2
+
+
+@pytest.mark.integration
+class TestRestrictToPodcasts:
+    """restrict_to_podcasts pins the bulk-access surface to a subset."""
+
+    def test_limits_get_all_podcast_ids(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        assert backend.get_all_podcast_ids() == [PID_WITH_TURNS]
+
+    def test_limits_search_episodes(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        pids = {row["podcast_id"] for row in backend.search_episodes()}
+        assert pids == {PID_WITH_TURNS}
+
+    def test_updates_counts(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        assert (backend.num_podcasts, backend.num_episodes) == (2, 3)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        # PID_WITH_TURNS owns two of the three fixture episodes.
+        assert (backend.num_podcasts, backend.num_episodes) == (1, 2)
+
+    def test_statistics_report_the_slice(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        stats = backend.get_statistics()
+        assert stats["total_podcasts"] == 1
+        assert stats["total_episodes"] == 2
+
+    def test_none_lifts_the_restriction(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        backend.restrict_to_podcasts(None)
+        assert len(backend.get_all_podcast_ids()) == 2
+        assert (backend.num_podcasts, backend.num_episodes) == (2, 3)
+
+    def test_unknown_ids_are_dropped(self, tmp_parquet_layout):
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS, "ffffffffffff"])
+        assert backend.get_all_podcast_ids() == [PID_WITH_TURNS]
+        assert backend.num_podcasts == 1
+
+    def test_direct_lookup_still_reaches_outside_the_slice(
+        self, tmp_parquet_layout
+    ):
+        # Pinning bounds iteration, not addressed-by-id access: a caller who
+        # names a podcast still gets it.
+        backend = ParquetBackend(tmp_parquet_layout)
+        backend.restrict_to_podcasts([PID_WITH_TURNS])
+        assert backend.has_podcast(PID_NO_TURNS)
+        assert backend.get_podcast_by_id(PID_NO_TURNS)["podcast_id"] == PID_NO_TURNS
+
+
+@pytest.mark.integration
+class TestSubsetPinsTheDataset:
+    """
+    SPORCDataset(subset=...) must both fetch and pin: without pinning the
+    backend still reports the whole catalog, so iterating walks out of the slice
+    -- raising DataNotLocalError with downloads off, or pulling the corpus with
+    them on.
+    """
+
+    def test_subset_narrows_the_reported_corpus(self, tmp_parquet_layout):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout,
+                          subset=[PID_WITH_TURNS])
+        assert ds._parquet_backend.num_podcasts == 1
+        assert len(ds) == 2  # __len__ is episode count
+
+    def test_iteration_stays_in_the_slice(self, tmp_parquet_layout):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout,
+                          subset=[PID_WITH_TURNS])
+        pids = {p.podcast_id for p in ds.iterate_podcasts()}
+        assert pids == {PID_WITH_TURNS}
+        assert len(list(ds.iterate_episodes())) == 2
+
+    def test_no_subset_leaves_the_whole_corpus_visible(self, tmp_parquet_layout):
+        ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
+        assert ds._parquet_backend.num_podcasts == 2
 
 
 @pytest.mark.integration
@@ -463,10 +637,19 @@ class TestUnknownSearchCriteriaAreRefused:
         # contain a row cap, so the message has to name the one that is.
         backend = ParquetBackend(tmp_parquet_layout)
 
-        for wrong in ("limit", "n", "top_k", "count", "max_results",
-                      "num_episodes"):
+        for wrong in ("limit", "n", "top_k", "count", "num_episodes"):
             with pytest.raises(TypeError, match="max_episodes"):
                 backend.search_episodes(**{wrong: 3})
+
+    def test_max_results_is_a_real_cap(self, tmp_parquet_layout):
+        # The backend's own cap parameter; unlike the guesses above it caps
+        # rather than raising, and does so before the rows are materialized.
+        backend = ParquetBackend(tmp_parquet_layout)
+
+        assert len(backend.search_episodes()) == 3
+        assert len(backend.search_episodes(max_results=1)) == 1
+        assert len(backend.search_episodes(max_results=1,
+                                           category="comedy")) == 1
 
     def test_supported_criteria_still_filter(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
