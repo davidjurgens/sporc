@@ -47,3 +47,20 @@ class DataNotLocalError(SPORCError):
     not permitted, and is deliberately distinct from :class:`NotFoundError`.
     """
     pass
+
+
+class FrameTooLargeError(SPORCError):
+    """
+    Raised when a requested DataFrame would not fit in memory.
+
+    The frame API knows the exact row count before it reads anything (the shard
+    map records it) and estimates the width from the columns asked for, so it
+    can refuse rather than let the request run. It refuses rather than warning
+    because the failure it prevents is the operating system killing the
+    notebook kernel, which takes unsaved work with it.
+
+    The message names the ways to bound the request: ``podcast_ids=``,
+    ``columns=``, loading with ``subset=``, iterating in chunks, or
+    ``allow_large=True`` to say the machine can take it.
+    """
+    pass

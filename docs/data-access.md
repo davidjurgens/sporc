@@ -63,6 +63,24 @@ Two things are worth knowing:
   from turns, so it only covers diarized episodes and never fetches one
   without them.
 
+## Getting a table out
+
+For anything above the level of one episode, read the data as columns rather
+than walking the object model — it is the same files and about two orders of
+magnitude faster, because the object model parses a Parquet footer per podcast:
+
+```python
+turns = ds.turns_frame(columns=["episode_id", "turn_count", "start_time"])
+windows = ds.window_frame(size=12, overlap=6)
+guests = ds.catalog("guest_index")      # corpus-wide, ignores subset= pinning
+paths = ds.parquet_paths("turns_text")  # for DuckDB or pd.read_parquet
+```
+
+Pair it with `subset=`: the frames then cover exactly the slice you loaded. See
+the [DataFrames guide](guides/dataframes.md), which also covers the two columns
+that mislead — `speaker` is a list, and the inferred-speaker columns hold
+sentinels rather than nulls.
+
 ## Time span
 
 SPoRC is a two-month snapshot: every episode was published between 1 May and

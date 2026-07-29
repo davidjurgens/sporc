@@ -16,7 +16,7 @@ import re
 import time
 import warnings
 from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pyarrow as pa
 import pyarrow.feather as feather
@@ -176,6 +176,69 @@ class ParquetBackend:
         )
 
     # ------------------------------------------------------------------
+    # Catalog access
+    # ------------------------------------------------------------------
+    def metadata_path(self, name: str, *, required: bool = True
+                      ) -> Optional[str]:
+        """
+        Local path to the catalog *name*, fetching it if the source allows.
+
+        Routed through ``self._source`` rather than probing ``metadata/``
+        directly. That matters for a lazily-loaded dataset: a catalog that ships
+        with the corpus but was not among the files downloaded at construction
+        is fetched here rather than reported as missing, which is what used to
+        happen and read like the dataset was incomplete.
+
+        Args:
+            name: Catalog name, e.g. ``"guest_index"``. Aliases are accepted.
+            required: Raise if it cannot be resolved, rather than returning None.
+
+        Raises:
+            IndexNotBuiltError: when *required* and the catalog is unavailable.
+        """
+        from . import schema
+
+        canonical = schema.resolve_table(name)
+        rel = schema.catalog_file(canonical)
+        path = self._source.path(rel)
+        if path is None and required:
+            raise IndexNotBuiltError(
+                f"{schema.catalog_label(canonical)} not found at "
+                f"{os.path.join(self.data_dir, rel)}. "
+                f"{schema.catalog_hint(canonical, self.data_dir)}"
+            )
+        return path
+
+    def read_catalog(self, name: str, columns: Optional[List[str]] = None):
+        """
+        Read a metadata catalog as an Arrow table.
+
+        Unlike the per-podcast trees, catalogs are single files and small -- the
+        guest index is a megabyte -- so this reads the whole thing. Pass
+        *columns* to project.
+        """
+        from . import schema
+
+        canonical = schema.resolve_table(name)
+        cols = schema.validate_columns(canonical, columns)
+        path = self.metadata_path(canonical)
+        logger.info("Loading %s from %s", canonical, path)
+        return pq.read_table(path, columns=cols)
+
+    def _ensure_catalog_df(self, attr: str, name: str) -> None:
+        """
+        Materialize a catalog into ``self.<attr>`` on first access.
+
+        One implementation for what used to be eight near-identical loaders,
+        each with its own path join and existence probe. They differed only in
+        which attribute they filled and what they said when the file was
+        missing, and both of those are data.
+        """
+        if getattr(self, attr) is not None:
+            return
+        setattr(self, attr, self.read_catalog(name).to_pandas())
+
+    # ------------------------------------------------------------------
     # Lazy DataFrame access
     # ------------------------------------------------------------------
     def _ensure_podcast_df(self):
@@ -187,9 +250,7 @@ class ParquetBackend:
             logger.info("Loading podcast DataFrame from feather cache")
             self._podcast_df = feather.read_feather(cache_path)
         else:
-            logger.info("Loading podcast DataFrame from parquet")
-            path = os.path.join(self._meta_dir, "podcast_catalog.parquet")
-            self._podcast_df = pq.read_table(path).to_pandas()
+            self._ensure_catalog_df("_podcast_df", "podcasts")
 
     def _ensure_episode_df(self):
         """Materialize the episode DataFrame on first access."""
@@ -200,9 +261,7 @@ class ParquetBackend:
             logger.info("Loading episode DataFrame from feather cache")
             self._episode_df = feather.read_feather(cache_path)
         else:
-            logger.info("Loading episode DataFrame from parquet")
-            path = os.path.join(self._meta_dir, "episode_catalog.parquet")
-            self._episode_df = pq.read_table(path).to_pandas()
+            self._ensure_catalog_df("_episode_df", "episodes")
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -585,6 +644,143 @@ class ParquetBackend:
         with self._source.downloads_enabled():
             return {rel: self._source.path(rel) is not None for rel in rels}
 
+    # ------------------------------------------------------------------
+    # Bulk (columnar) reads
+    #
+    # These read many podcasts at once, which is a different problem from
+    # _read_tree's one-podcast-at-a-time. Going through _read_tree in a loop
+    # would reproduce the object model's cost profile -- a row-group read and an
+    # Arrow table per podcast, then a concat -- and could not push a projection
+    # or a filter into a single scan. See sporc/frames.py for the callers.
+    # ------------------------------------------------------------------
+    def resolve_podcast_ids(self, podcast_ids: Optional[Iterable[str]] = None,
+                            *, respect_restrict: bool = True) -> List[str]:
+        """
+        The podcast ids a bulk read should cover.
+
+        None means "the current view", which honours an active
+        :meth:`restrict_to_podcasts`. An explicit list is intersected with that
+        restriction as well, so pinning a dataset to a subset cannot be
+        sidestepped by accident -- and ids not in the catalog are dropped.
+        """
+        if podcast_ids is None:
+            return self.get_all_podcast_ids()
+        # dict.fromkeys rather than set(): duplicates go, order stays, and a
+        # frame's row order should not depend on hash seeding.
+        wanted = list(dict.fromkeys(podcast_ids))
+        known = self._pid_to_idx
+        out = [p for p in wanted if p in known]
+        if respect_restrict and self._restrict is not None:
+            out = [p for p in out if p in self._restrict]
+        return out
+
+    def tree_row_count(self, tree: str,
+                       podcast_ids: Optional[Iterable[str]] = None) -> int:
+        """
+        How many rows *podcast_ids* have in *tree*.
+
+        Exact, and free: the shard map records a row count per podcast per tree,
+        so this answers from memory without opening a file. It is what lets a
+        frame request be refused before anything is read.
+        """
+        smap = self.shard_map
+        ids = self.resolve_podcast_ids(podcast_ids)
+        total = 0
+        for pid in ids:
+            loc = smap.locate(tree, pid)
+            if loc is not None:
+                total += loc.num_rows
+        return total
+
+    def tree_parts(self, tree: str,
+                   podcast_ids: Optional[Iterable[str]] = None) -> List[str]:
+        """Part file names in *tree* needed to cover *podcast_ids*."""
+        return self.shard_map.parts_for(
+            tree, self.resolve_podcast_ids(podcast_ids))
+
+    def part_paths(self, tree: str,
+                   podcast_ids: Optional[Iterable[str]] = None) -> List[str]:
+        """
+        Local paths of the part files covering *podcast_ids* in *tree*.
+
+        Resolved through the data source, so against the Hub this downloads the
+        parts. That is deliberate for a bulk read: the caller wants the data,
+        will very likely ask again (a notebook cell gets re-run), and a part is
+        the unit the Hub serves.
+
+        Exposed publicly because it is the honest primitive underneath the frame
+        API -- and the whole answer for anyone who would rather point DuckDB or
+        ``pd.read_parquet`` at the files themselves.
+        """
+        smap = self.shard_map
+        out = []
+        for part in self.tree_parts(tree, podcast_ids):
+            path = self._source.path(smap.relpath(tree, part))
+            if path is not None:
+                out.append(path)
+        return out
+
+    def _covers_parts(self, tree: str, parts: List[str],
+                      podcast_ids: List[str]) -> bool:
+        """Whether *podcast_ids* is every podcast living in *parts*."""
+        wanted = set(podcast_ids)
+        part_set = set(parts)
+        for pid, loc in self.shard_map.items(tree):
+            if loc.part in part_set and pid not in wanted:
+                return False
+        return True
+
+    def scan_tree(self, tree: str, *,
+                  podcast_ids: Optional[Iterable[str]] = None,
+                  columns: Optional[List[str]] = None,
+                  parts: Optional[List[str]] = None):
+        """
+        Read many podcasts' rows from *tree* as one Arrow table.
+
+        Uses ``pyarrow.dataset`` so the column projection and the podcast filter
+        are pushed into the scan: rows belonging to other podcasts in the same
+        part file are never materialized. Reading each part with
+        ``pq.read_table`` and filtering afterwards gives the same answer and
+        measured about 2.5x slower.
+
+        Args:
+            tree: One of the names in :data:`sporc.shard_map.TREE_DIRS`.
+            podcast_ids: Restrict to these; None means the current view.
+            columns: Project to these; None means all.
+            parts: Read only these part files. Used by the chunked iterator;
+                the podcast filter still applies.
+
+        Returns:
+            An Arrow table, empty (with the right schema, if it could be
+            determined) when nothing matches.
+        """
+        import pyarrow.dataset as pads
+
+        smap = self.shard_map
+        ids = self.resolve_podcast_ids(podcast_ids)
+        wanted_parts = parts if parts is not None else smap.parts_for(tree, ids)
+
+        paths = []
+        for part in wanted_parts:
+            path = self._source.path(smap.relpath(tree, part))
+            if path is not None:
+                paths.append(path)
+        if not paths:
+            return pa.table({})
+
+        dset = pads.dataset(paths, format="parquet")
+
+        # Skip the filter when the requested set is every podcast in these
+        # parts. An isin over 200,000 values is not free, and the whole-corpus
+        # case is exactly when it would be largest and least useful.
+        filt = None
+        from . import schema
+        if tree in schema.TREE_HAS_PODCAST_ID and not self._covers_parts(
+                tree, wanted_parts, ids):
+            filt = pads.field("podcast_id").isin(ids)
+
+        return dset.to_table(columns=columns, filter=filt)
+
     def has_podcast(self, podcast_id: str) -> bool:
         """Whether *podcast_id* is in the catalog."""
         return podcast_id in self._pid_to_idx
@@ -756,6 +952,24 @@ class ParquetBackend:
         if self._restrict is not None:
             df = df[df["podcast_id"].isin(self._restrict)]
         return df
+
+    def covers_whole_catalog(self, podcast_ids: Iterable[str]) -> bool:
+        """Whether *podcast_ids* is every podcast in the catalog."""
+        return len(set(podcast_ids)) >= len(self._pid_to_idx)
+
+    def restricted_episode_frame(self, columns: Optional[List[str]] = None):
+        """
+        The episode catalog for the current view, as a DataFrame **copy**.
+
+        A copy rather than a view because callers add columns to it. Handing
+        back the backend's own cached catalog would let a notebook cell doing
+        ``df["day"] = ...`` change what every later ``search_episodes()`` sees,
+        and the resulting bug would depend on which cells had been run.
+        """
+        df = self._restricted_episode_df()
+        if columns is not None:
+            df = df[list(columns)]
+        return df.copy()
 
     def _all_episode_records(self) -> List[Dict[str, Any]]:
         """
@@ -1318,43 +1532,15 @@ class ParquetBackend:
     # ------------------------------------------------------------------
     def _ensure_speaker_index(self) -> None:
         """Load speaker_name_index.parquet on first speaker search."""
-        if self._speaker_index_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "speaker_name_index.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Speaker name index not found at {path}. "
-                "Build it with: python scripts/build_indexes.py --data-dir "
-                f"{self.data_dir} --phase 1"
-            )
-        logger.info("Loading speaker name index from %s", path)
-        self._speaker_index_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_speaker_index_df", "speaker_name_index")
 
     def _ensure_host_index(self) -> None:
         """Load host_index.parquet (podcast-grained hosts) on first use."""
-        if self._host_index_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "host_index.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Host index not found at {path}. It ships with the dataset "
-                "metadata; update to a dataset build that includes it."
-            )
-        logger.info("Loading host index from %s", path)
-        self._host_index_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_host_index_df", "host_index")
 
     def _ensure_host_episode_index(self) -> None:
         """Load host_episode_index.parquet (episode-grained hosts) on first use."""
-        if self._host_episode_index_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "host_episode_index.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Host episode index not found at {path}. It ships with the "
-                "dataset metadata; update to a dataset build that includes it."
-            )
-        logger.info("Loading host episode index from %s", path)
-        self._host_episode_index_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_host_episode_index_df", "host_episode_index")
 
     def get_podcasts_by_host(self, name: str, *, exact: bool = False) -> List[str]:
         """
@@ -1400,29 +1586,12 @@ class ParquetBackend:
 
     def _ensure_guest_index(self) -> None:
         """Load guest_index.parquet (podcast-grained diarized guests)."""
-        if self._guest_index_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "guest_index.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Guest index not found at {path}. It ships with the dataset "
-                "metadata; update to a dataset build that includes it."
-            )
-        logger.info("Loading guest index from %s", path)
-        self._guest_index_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_guest_index_df", "guest_index")
 
     def _ensure_guest_episode_index(self) -> None:
         """Load guest_episode_index.parquet (episode-grained diarized guests)."""
-        if self._guest_episode_index_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "guest_episode_index.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Guest episode index not found at {path}. It ships with the "
-                "dataset metadata; update to a dataset build that includes it."
-            )
-        logger.info("Loading guest episode index from %s", path)
-        self._guest_episode_index_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_guest_episode_index_df",
+                                "guest_episode_index")
 
     def get_podcasts_by_guest(self, name: str, *, exact: bool = False) -> List[str]:
         """
@@ -1484,17 +1653,7 @@ class ParquetBackend:
 
     def _ensure_episode_metrics_df(self) -> None:
         """Load episode_metrics.parquet on first metrics query."""
-        if self._episode_metrics_df is not None:
-            return
-        path = os.path.join(self._meta_dir, "episode_metrics.parquet")
-        if not os.path.exists(path):
-            raise IndexNotBuiltError(
-                f"Episode metrics index not found at {path}. "
-                "Build it with: python scripts/build_indexes.py --data-dir "
-                f"{self.data_dir} --phase 2"
-            )
-        logger.info("Loading episode metrics from %s", path)
-        self._episode_metrics_df = pq.read_table(path).to_pandas()
+        self._ensure_catalog_df("_episode_metrics_df", "episode_metrics")
 
     def has_search_db(self) -> bool:
         """Whether the DuckDB full-text index is available."""

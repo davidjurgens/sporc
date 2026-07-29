@@ -28,6 +28,10 @@ Examples:
 
   # Search for episodes with criteria
   sporc search-episodes --min-duration 1800 --category education
+
+  # Look up what is in a table, without loading anything
+  sporc columns acoustics
+  sporc columns turns --grep speaker
         """
     )
 
@@ -80,6 +84,20 @@ Examples:
         "--parquet-dir", help="Local directory with parquet files (downloads from HF if omitted)"
     )
 
+    # Columns command. Deliberately needs no dataset, no network and no
+    # credentials: the answer comes from the static registry in sporc/schema.py,
+    # so looking up a column name costs nothing.
+    columns_parser = subparsers.add_parser(
+        "columns", help="Describe the columns of a table (offline)"
+    )
+    columns_parser.add_argument(
+        "table", nargs="?",
+        help="Table to describe. Omit to list the available tables."
+    )
+    columns_parser.add_argument(
+        "--grep", help="Only show columns whose name or description matches"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -93,6 +111,8 @@ Examples:
             handle_search_podcast(args)
         elif args.command == "search-episodes":
             handle_search_episodes(args)
+        elif args.command == "columns":
+            handle_columns(args)
         else:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
@@ -215,6 +235,55 @@ def handle_search_episodes(args: argparse.Namespace) -> None:
 
         if len(episodes) > args.limit:
             print(f"\n... and {len(episodes) - args.limit} more episodes")
+
+
+def handle_columns(args: argparse.Namespace) -> None:
+    """
+    Handle the columns command.
+
+    Answers from sporc/schema.py, so it works with no dataset downloaded and no
+    Hub token. The acoustic feature names in particular are long enough that
+    people want to look them up rather than type them from memory.
+    """
+    import shutil
+    import textwrap
+
+    from . import schema
+
+    if not args.table:
+        print("Tables:\n")
+        for name in schema.list_tables():
+            spec = schema.TABLES[name]
+            where = (f"tree {spec.source}" if spec.kind == "tree"
+                     else f"metadata/{spec.source}.parquet")
+            print(f"  {name:<22} {where}")
+        print("\nRun `sporc columns <table>` to see a table's columns.")
+        return
+
+    table = schema.resolve_table(args.table)
+    cols = schema.COLUMNS[table]
+
+    needle = args.grep.lower() if args.grep else None
+    shown = {n: s for n, s in cols.items()
+             if needle is None
+             or needle in n.lower() or needle in s.description.lower()}
+
+    if not shown:
+        print(f"No columns in {table!r} match {args.grep!r}.")
+        return
+
+    width = min(shutil.get_terminal_size((100, 24)).columns, 100)
+    name_w = max(len(n) for n in shown) + 2
+    body_w = max(30, width - name_w - 12)
+
+    print(f"{table}  ({len(shown)} of {len(cols)} columns)\n"
+          if needle else f"{table}  ({len(cols)} columns)\n")
+    for name, spec in shown.items():
+        wrapped = textwrap.wrap(spec.description, body_w) or [""]
+        print(f"  {name:<{name_w}} {spec.dtype:<14} {wrapped[0]}")
+        for line in wrapped[1:]:
+            print(f"  {'':<{name_w}} {'':<14} {line}")
+    print()
 
 
 if __name__ == "__main__":

@@ -8,7 +8,12 @@ import logging
 import os
 import random
 import re
-from typing import List, Dict, Any, Optional, Iterator
+from typing import (
+    TYPE_CHECKING, Any, Dict, Iterable, Iterator, List, Optional,
+)
+
+if TYPE_CHECKING:  # pragma: no cover
+    from pandas import DataFrame
 
 from .podcast import Podcast
 from .episode import Episode
@@ -160,6 +165,29 @@ class SPORCDataset:
     ]
 
     @classmethod
+    def _download_one(cls, rel: str, token: Optional[str] = None,
+                      cache_dir: Optional[str] = None) -> Optional[str]:
+        """
+        Fetch one file from the dataset repo, or None if the repo has no such
+        file.
+
+        ``huggingface_hub`` owns the cache layout, so resolving a path means
+        asking it rather than reconstructing
+        ``datasets--blitt--SPoRC/snapshots/...`` by hand -- a convention that is
+        not ours to depend on.
+        """
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.errors import EntryNotFoundError
+
+        try:
+            return hf_hub_download(
+                repo_id=cls.DATASET_ID, repo_type="dataset", filename=rel,
+                token=token, cache_dir=cache_dir,
+            )
+        except EntryNotFoundError:
+            return None
+
+    @classmethod
     def _download_metadata(cls, token: Optional[str], cache_dir: Optional[str],
                            include_search_db: bool,
                            include_turn_text: bool = False) -> str:
@@ -174,9 +202,6 @@ class SPORCDataset:
             DatasetAccessError: if a catalog the package cannot work without is
                 missing from the dataset.
         """
-        from huggingface_hub import hf_hub_download
-        from huggingface_hub.errors import EntryNotFoundError
-
         wanted = list(cls._CORE_METADATA) + list(cls._OPTIONAL_METADATA)
         if include_search_db:
             wanted.append(cls._SEARCH_DB_PATTERN)
@@ -185,12 +210,8 @@ class SPORCDataset:
 
         root = None
         for rel in wanted:
-            try:
-                path = hf_hub_download(
-                    repo_id=cls.DATASET_ID, repo_type="dataset", filename=rel,
-                    token=token, cache_dir=cache_dir,
-                )
-            except EntryNotFoundError:
+            path = cls._download_one(rel, token=token, cache_dir=cache_dir)
+            if path is None:
                 if rel in cls._CORE_METADATA:
                     raise DatasetAccessError(
                         f"{cls.DATASET_ID} is missing required metadata file "
@@ -485,7 +506,7 @@ class SPORCDataset:
         Args:
             max_episodes: Maximum number of episodes to return (None for all)
             sampling_mode: How to sample episodes ("first" or "random")
-            **criteria: Search criteria including:
+            **criteria (Any): Search criteria including:
                 - min_duration: Minimum duration in seconds
                 - max_duration: Maximum duration in seconds
                 - min_speakers: Minimum number of speakers
@@ -536,7 +557,7 @@ class SPORCDataset:
 
         Args:
             subcategory: Subcategory to search for
-            **additional_criteria: Additional search criteria (same as search_episodes)
+            **additional_criteria (Any): Additional search criteria (same as search_episodes)
 
         Returns:
             List of episodes in the specified subcategory
@@ -915,6 +936,243 @@ class SPORCDataset:
         return self._parquet_backend.estimate_word_audio(
             podcast_id, episode_id, word, occurrence=occurrence,
         )
+
+    # ------------------------------------------------------------------
+    # DataFrame access
+    #
+    # The columnar route. Delegates to sporc/frames.py, which holds the reading
+    # logic; see that module for why frames are never cached and why the size
+    # guard refuses rather than warns.
+    # ------------------------------------------------------------------
+
+    def turns_frame(self, columns: Optional[List[str]] = None, *,
+                    metrics: bool = False, acoustics: bool = False,
+                    speakers: bool = False,
+                    podcast_ids: Optional[Iterable[str]] = None,
+                    episode_ids: Optional[Iterable[str]] = None,
+                    sort: bool = True, allow_large: bool = False) -> "DataFrame":
+        """
+        Every turn in the loaded view, as a pandas DataFrame.
+
+        The fast route for anything above the level of one episode: reading a
+        genre slice takes about a second, where walking the object model to
+        build the same table takes minutes.
+
+        Start with ``columns=``. The full table is ~710 bytes a row, most of it
+        ``turn_text``; the three columns most analyses begin from are 85::
+
+            turns = ds.turns_frame(
+                columns=["episode_id", "turn_count", "start_time", "speaker"])
+
+        Args:
+            columns: Project to these. Join keys are added back if omitted.
+            metrics: Left-join per-turn metrics (word counts, gaps, rates).
+            acoustics: Left-join the twelve eGeMAPSv2 acoustic summaries.
+            speakers: Add ``is_overlapping``, ``primary_speaker``, ``is_host``,
+                ``is_guest``, ``has_inferred_speaker``, ``has_inferred_role``.
+            podcast_ids: Restrict to these podcasts.
+            episode_ids: Restrict to these episodes.
+            sort: Order by ``(episode_id, start_time, turn_count)``, matching
+                ``Episode.turns``.
+            allow_large: Skip the size guard.
+
+        Returns:
+            A fresh DataFrame. Nothing is cached, so adding columns to it is
+            safe.
+
+        Raises:
+            FrameTooLargeError: if the request would not fit in memory.
+        """
+        from . import frames
+
+        return frames.turns_frame(
+            self._parquet_backend, columns, metrics=metrics,
+            acoustics=acoustics, speakers=speakers, podcast_ids=podcast_ids,
+            episode_ids=episode_ids, sort=sort, allow_large=allow_large)
+
+    def iter_turns_frames(self, columns: Optional[List[str]] = None, *,
+                          metrics: bool = False, acoustics: bool = False,
+                          speakers: bool = False,
+                          podcast_ids: Optional[Iterable[str]] = None,
+                          sort: bool = True) -> Iterator["DataFrame"]:
+        """
+        The same turns, one DataFrame per part file.
+
+        For work spanning more turns than fit in memory. Memory is bounded by
+        part size however large the corpus is, so this needs no size guard::
+
+            totals = Counter()
+            for chunk in ds.iter_turns_frames(columns=["inferred_speaker_role"]):
+                totals.update(chunk.inferred_speaker_role.value_counts())
+        """
+        from . import frames
+
+        return frames.iter_turns_frames(
+            self._parquet_backend, columns, metrics=metrics,
+            acoustics=acoustics, speakers=speakers, podcast_ids=podcast_ids,
+            sort=sort)
+
+    def turns_dataset(self, *,
+                      podcast_ids: Optional[Iterable[str]] = None) -> Any:
+        """
+        A ``pyarrow.dataset.Dataset`` over the turn part files.
+
+        Nothing is read until scanned, so this is the out-of-core escape hatch.
+        Note it spans whole part files and so sees every podcast in them.
+        """
+        from . import frames
+
+        return frames.turns_dataset(self._parquet_backend,
+                                    podcast_ids=podcast_ids)
+
+    def episodes_frame(self, columns: Optional[List[str]] = None, *,
+                       parse_dates: bool = True, metrics: bool = False,
+                       podcast_ids: Optional[Iterable[str]] = None
+                       ) -> "DataFrame":
+        """
+        The episode catalog for the loaded view, as a DataFrame.
+
+        ``parse_dates=True`` converts ``episode_date`` -- a string holding a
+        millisecond epoch -- into a UTC timestamp and adds a ``day`` column.
+        Passing the raw column to ``pd.to_datetime`` yields dates in 1970 and
+        raises nothing, so this is on by default.
+
+        Honours ``subset=`` pinning; use :meth:`catalog` for the corpus-wide
+        catalog.
+        """
+        from . import frames
+
+        return frames.episodes_frame(
+            self._parquet_backend, columns, parse_dates=parse_dates,
+            metrics=metrics, podcast_ids=podcast_ids)
+
+    def podcasts_frame(self, columns: Optional[List[str]] = None, *,
+                       podcast_ids: Optional[Iterable[str]] = None
+                       ) -> "DataFrame":
+        """
+        The podcast catalog for the loaded view, as a DataFrame.
+
+        Honours ``subset=`` pinning; use :meth:`catalog` for the corpus-wide
+        catalog.
+        """
+        from . import frames
+
+        return frames.podcasts_frame(self._parquet_backend, columns,
+                                     podcast_ids=podcast_ids)
+
+    def episode_metrics_frame(self, columns: Optional[List[str]] = None, *,
+                              podcast_ids: Optional[Iterable[str]] = None
+                              ) -> "DataFrame":
+        """
+        Per-episode conversation metrics for the loaded view, as a DataFrame.
+
+        Word and turn counts, speaking rates, host/guest balance, gaps and
+        overlap -- one row per episode.
+        """
+        from . import frames
+
+        return frames.episode_metrics_frame(self._parquet_backend, columns,
+                                            podcast_ids=podcast_ids)
+
+    def window_frame(self, size: int = 12, overlap: int = 0, *,
+                     columns: Optional[List[str]] = None,
+                     podcast_ids: Optional[Iterable[str]] = None,
+                     episode_ids: Optional[Iterable[str]] = None,
+                     text: bool = True, separator: str = " ",
+                     partial: bool = False,
+                     allow_large: bool = False) -> "DataFrame":
+        """
+        Conversation windows over the loaded view, as a DataFrame.
+
+        The columnar equivalent of :meth:`Episode.sliding_window`, and it
+        produces the same windows -- including the trailing-partial behaviour --
+        so results are comparable between the two routes.
+
+        ``overlap`` is the part worth having in a library: with it, the
+        ``cumcount() // size`` trick stops working, because a turn belongs to
+        several windows rather than one.
+
+        Args:
+            size: Turns per window.
+            overlap: Turns shared with the previous window; must be < size.
+            columns: Extra turn columns to carry through, aggregated per window.
+            text: Join the turn text per window. The expensive part; set False
+                if you only want timings.
+            partial: Also emit the trailing short window that
+                ``sliding_window`` drops.
+        """
+        from . import frames
+
+        return frames.window_frame(
+            self._parquet_backend, size=size, overlap=overlap, columns=columns,
+            podcast_ids=podcast_ids, episode_ids=episode_ids, text=text,
+            separator=separator, partial=partial, allow_large=allow_large)
+
+    def catalog(self, name: str,
+                columns: Optional[List[str]] = None) -> "DataFrame":
+        """
+        Read a corpus-wide metadata catalog as a DataFrame.
+
+        **Ignores ``subset=`` pinning, deliberately.** The catalogs describe all
+        228,099 podcasts, and reaching past a loaded slice is the reason to have
+        them -- a cross-genre guest network needs the whole guest index while
+        the dataset in hand is one genre. The ``*_frame()`` methods do the
+        opposite and stay inside the slice.
+
+        They are also cheap: the guest index is about a megabyte, and they all
+        arrive with any Hub-backed load.
+
+        Args:
+            name: See :meth:`catalogs`. Aliases such as ``"episode_catalog"``
+                are accepted.
+            columns: Project to these columns.
+        """
+        from . import frames
+
+        return frames.catalog_frame(self._parquet_backend, name, columns)
+
+    @staticmethod
+    def catalogs() -> List[str]:
+        """Names :meth:`catalog` accepts."""
+        from . import frames
+
+        return frames.list_catalogs()
+
+    @staticmethod
+    def columns(table: str) -> "DataFrame":
+        """
+        Describe a table's columns: name, dtype, bytes per row, description.
+
+        Answers from a static registry, so it needs no data on disk::
+
+            ds.columns("acoustics")
+
+        Also available without a dataset as ``sporc.describe_columns(table)``
+        and on the command line as ``sporc columns <table>``.
+        """
+        from . import frames
+
+        return frames.describe_columns(table)
+
+    def parquet_paths(self, tree: str, *,
+                      podcast_ids: Optional[Iterable[str]] = None
+                      ) -> List[str]:
+        """
+        Local paths of the part files backing *tree* for the loaded view.
+
+        The honest primitive under the frame API, and the whole answer for
+        anyone who would rather use DuckDB or ``pd.read_parquet`` directly::
+
+            con.execute(f"SELECT ... FROM read_parquet({ds.parquet_paths('turns_text')})")
+
+        Against the Hub this downloads the parts, since that is what having a
+        path means.
+
+        Args:
+            tree: ``"episodes"``, ``"turns_text"``, ``"turns_metrics"`` or
+                ``"acoustics"``.
+        """
+        return self._parquet_backend.part_paths(tree, podcast_ids)
 
     # ------------------------------------------------------------------
     # Dunder methods

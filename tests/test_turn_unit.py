@@ -159,3 +159,66 @@ def test_turn_zero_duration():
     t = Turn(speaker=["SPEAKER_00"], text="oneword", start_time=0, end_time=0, duration=0, turn_count=1)
     assert t.words_per_second == 0.0
     assert t.word_count == 1
+
+# ---------------------------------------------------------------------------
+# Placeholder speakers
+#
+# The two inferred_speaker_* fields carry sentinels rather than nulls, so the
+# obvious null test keeps every unattributed turn. That mistake shipped in
+# teaching material built on this package and overstated a figure sixfold, so
+# the properties that avoid it are tested against every value they can see.
+# ---------------------------------------------------------------------------
+
+def _turn(**kw):
+    base = dict(speaker=["SPEAKER_00"], text="words here", start_time=0.0,
+                end_time=1.0, duration=1.0, turn_count=0)
+    base.update(kw)
+    return Turn(**base)
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("Ira Glass", True),
+    ("NO_INFERRED_SPEAKER", False),
+    ("SPEAKER_UNKNOWN", False),
+    (None, False),
+    ("", False),
+])
+def test_has_inferred_speaker(name, expected):
+    assert _turn(inferred_speaker_name=name).has_inferred_speaker is expected
+
+
+@pytest.mark.parametrize("role,expected", [
+    ("host", True),
+    ("guest", True),
+    ("NO_INFERRED_ROLE", False),
+    (None, False),
+    ("", False),
+])
+def test_has_inferred_role(role, expected):
+    assert _turn(inferred_speaker_role=role).has_inferred_role is expected
+
+
+def test_sentinel_role_is_neither_host_nor_guest():
+    """`not is_host` does not mean guest; most turns are neither."""
+    t = _turn(inferred_speaker_role="NO_INFERRED_ROLE")
+    assert t.is_host is False and t.is_guest is False
+    assert t.has_inferred_role is False
+
+
+def test_primary_speaker_of_unattributed_turn_is_none():
+    """
+    An empty speaker list is legal (see Turn.__post_init__), so reading the
+    primary speaker off one must not raise.
+    """
+    t = _turn(speaker=[])
+    assert t.primary_speaker is None
+    assert t.is_overlapping is False
+    assert "no speaker" in str(t)
+    assert t.to_dict()["primary_speaker"] is None
+
+
+def test_to_dict_carries_the_sentinel_flags():
+    d = _turn(inferred_speaker_name="NO_INFERRED_SPEAKER",
+              inferred_speaker_role="host").to_dict()
+    assert d["has_inferred_speaker"] is False
+    assert d["has_inferred_role"] is True

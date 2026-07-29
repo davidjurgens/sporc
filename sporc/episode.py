@@ -4,7 +4,7 @@ Episode class for representing podcast episodes.
 
 from typing import List, Optional, Dict, Any, Callable, Iterator, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from bisect import bisect_left, bisect_right
 import hashlib
 import json
@@ -299,8 +299,57 @@ class Episode:
         return self.duration_seconds / 3600.0
 
     @property
+    def episode_datetime(self) -> Optional[datetime]:
+        """
+        Publication time, as a timezone-aware UTC datetime.
+
+        Prefer this to :attr:`episode_date`, which is local-naive: it renders
+        the same instant in whatever timezone the machine happens to be set to,
+        so the calendar day it reports depends on where the code runs. About
+        13.6% of episodes fall on a different day between ``Asia/Tokyo`` and
+        ``America/Detroit``, which is enough to move counts in a daily
+        time series.
+
+        The underlying field is a millisecond Unix epoch stored as a string.
+        Despite its name, ``episode_date_localized`` is byte-for-byte the same
+        value as the catalog's ``episode_date`` -- neither is more localized
+        than the other, and both are UTC.
+        """
+        ms = self._episode_date_ms()
+        if ms is None:
+            return None
+        try:
+            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+
+    def _episode_date_ms(self) -> Optional[float]:
+        """The raw publication timestamp in milliseconds, or None."""
+        raw = self.episode_date_localized
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            try:
+                return float(raw) if raw else None
+            except (ValueError, TypeError):
+                return None
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
+
+    @property
     def episode_date(self) -> Optional[datetime]:
-        """Get the episode date as a datetime object."""
+        """
+        Publication time as a **local-naive** datetime.
+
+        Kept as it was, but note what it does: it converts the epoch with
+        ``datetime.fromtimestamp`` and no timezone, so the result is rendered in
+        the machine's local zone and carries no ``tzinfo`` to say so. Two
+        machines in different timezones report different calendar days for the
+        same episode. Use :attr:`episode_datetime` unless you specifically want
+        local time.
+        """
         if self.episode_date_localized is None:
             return None
 

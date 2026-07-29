@@ -57,7 +57,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .exceptions import SPORCError
 
@@ -74,21 +74,18 @@ PHONE_ALIGN_MODEL = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 # forced_align would answer with a plausible-looking wrong alignment.
 MAX_PHONE_CLIP_SECONDS = 5.0
 
-#: Speaker values that name no one. SPoRC writes NO_INFERRED_SPEAKER when name
-#: attribution found nobody, and it is the most common value by far -- in a
-#: sample of probe-word turns it outnumbers the commonest real name 422 to 74.
-#: Grouping by it pools hundreds of different people into one "speaker", which
-#: is the exact confound per-speaker normalization exists to remove.
-PLACEHOLDER_SPEAKERS = frozenset({
-    "NO_INFERRED_SPEAKER",
-    "NO_INFERRED_ROLE",
-    "SPEAKER_UNKNOWN",
-})
-
-#: Raw diarization labels (SPEAKER_00, ...). These are per-episode: SPEAKER_00
-#: in one episode is not SPEAKER_00 in the next, so they cannot identify a
-#: person across a podcast the way an inferred name can.
-_ANON_SPEAKER_RE = re.compile(r"^SPEAKER_\d+$", re.I)
+# Speaker values that name no one, and the pattern matching raw per-episode
+# diarization labels. Both moved to sporc/constants.py in 1.2 so they can be
+# imported from the package root without pulling in this module's alignment
+# stack; re-exported here because lobanov_normalize uses them and because
+# sporc.phonetics.PLACEHOLDER_SPEAKERS was the only public name for years.
+# In a sample of probe-word turns, NO_INFERRED_SPEAKER outnumbers the commonest
+# real name 422 to 74; grouping by it pools hundreds of different people into
+# one "speaker", the exact confound per-speaker normalization exists to remove.
+from .constants import (  # noqa: E402  (kept beside its explanation)
+    PLACEHOLDER_SPEAKERS,
+    ANON_SPEAKER_RE as _ANON_SPEAKER_RE,
+)
 
 #: Sample rate the aligners expect.
 SAMPLE_RATE = 16000
@@ -321,7 +318,7 @@ def resolve_audio_url(url: str, timeout: float = 20.0) -> str:
 
 def fetch_turn_audio(turn: Any, pad: float = 0.3,
                      sample_rate: int = SAMPLE_RATE,
-                     timeout: float = 120.0):
+                     timeout: float = 120.0) -> Tuple[Any, int]:
     """
     Fetch a single turn's audio, as an ``(audio, sample_rate)`` pair.
 
@@ -343,8 +340,8 @@ def fetch_turn_audio(turn: Any, pad: float = 0.3,
         timeout: Seconds to allow ffmpeg.
 
     Returns:
-        ``(audio, sample_rate)`` where audio is a 1-D float32 numpy array whose
-        t=0 corresponds to ``turn.start_time - pad``.
+        ``(audio, sample_rate)`` where audio is a 1-D float32 numpy array
+            whose t=0 corresponds to ``turn.start_time - pad``.
 
     Raises:
         PhoneticsError: if the url is missing, unreachable, or undecodable.
@@ -484,9 +481,10 @@ def _spans_to_intervals(spans, ratio: float, n_samples: int,
     return out
 
 
-def align_turn(turn: Any, audio=None, sample_rate: int = SAMPLE_RATE,
+def align_turn(turn: Any, audio: Optional[Any] = None,
+               sample_rate: int = SAMPLE_RATE,
                level: str = "word", word: Optional[str] = None,
-               variant: int = 0):
+               variant: int = 0) -> List[Any]:
     """
     Align a turn's text to its audio, returning word or phone timings.
 
@@ -502,7 +500,7 @@ def align_turn(turn: Any, audio=None, sample_rate: int = SAMPLE_RATE,
 
     Returns:
         A list of :class:`WordTiming` or :class:`PhoneTiming`, in time order,
-        with times in seconds from the start of ``audio``.
+            with times in seconds from the start of ``audio``.
 
     Raises:
         PhoneticsError: if alignment is impossible (word not in CMUdict, no
@@ -603,7 +601,7 @@ def align_turn(turn: Any, audio=None, sample_rate: int = SAMPLE_RATE,
 # Formants
 # ----------------------------------------------------------------------
 
-def measure_formants(audio, sample_rate: int, start: float, end: float,
+def measure_formants(audio: Any, sample_rate: int, start: float, end: float,
                      max_formant: float = 5500.0,
                      window: float = 0.04) -> Dict[str, Optional[float]]:
     """
@@ -697,7 +695,7 @@ def measure_word_in_turn(turn: Any, word: str, pad: float = 0.3,
     )
 
 
-def find_word_tokens(sporc, word: str, limit: int = 50,
+def find_word_tokens(sporc: "Any", word: str, limit: int = 50,
                      podcast_id: Optional[str] = None,
                      max_formant: float = 5500.0,
                      pad: float = 0.3,
@@ -783,7 +781,7 @@ def find_word_tokens(sporc, word: str, limit: int = 50,
 
 
 def lobanov_normalize(measurements: Union[Sequence[FormantMeasurement], Any],
-                      min_tokens: int = 5):
+                      min_tokens: int = 5) -> Any:
     """
     Lobanov-normalize F1/F2 per speaker (z-score within speaker).
 
@@ -812,8 +810,8 @@ def lobanov_normalize(measurements: Union[Sequence[FormantMeasurement], Any],
             over two tokens is noise.
 
     Returns:
-        A DataFrame with ``f1_z``/``f2_z`` added, restricted to speakers meeting
-        ``min_tokens``.
+        A DataFrame with ``f1_z``/``f2_z`` added, restricted to speakers
+            meeting ``min_tokens``.
     """
     import pandas as pd
 

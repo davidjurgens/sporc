@@ -11,7 +11,9 @@ import pytest
 
 from sporc.parquet_backend import ParquetBackend
 from sporc.exceptions import IndexNotBuiltError
-from conftest import PID_WITH_TURNS, EID_WITH_TURNS, EID_NO_TURNS
+from conftest import PID_WITH_TURNS, EID_WITH_TURNS, EID_NO_TURNS, EID_LONG
+
+ALL_EPISODES = {EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS, EID_LONG}
 
 
 class TestHostIndex:
@@ -36,9 +38,8 @@ class TestHostIndex:
     def test_episode_search_returns_ids(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
         hits = backend.search_by_host("ira glass")
-        # One row per episode that predicts Ira Glass as host (all three).
-        assert {h["episode_id"] for h in hits} == {
-            EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS}
+        # One row per episode that predicts Ira Glass as host (all of them).
+        assert {h["episode_id"] for h in hits} == ALL_EPISODES
         assert all(h["name_original"] == "Ira Glass" for h in hits)
         assert EID_WITH_TURNS in {h["episode_id"] for h in hits}
 
@@ -54,8 +55,6 @@ class TestHostIndex:
         with pytest.raises(IndexNotBuiltError):
             backend.get_podcasts_by_host("ira")
 
-
-ALL_EPISODES = {EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS}
 
 
 class TestSearchEpisodesRoutesThroughIndex:

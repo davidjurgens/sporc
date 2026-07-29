@@ -101,6 +101,7 @@ nav:
       - Working with the data: data-access.md
   - Tutorials: tutorials.md
   - Guides:
+      - DataFrames: guides/dataframes.md
       - Searching the corpus: guides/searching.md
       - Data loading & subsets: guides/loading.md
       - Categories: guides/categories.md
@@ -114,6 +115,7 @@ nav:
       - Podcast: reference/podcast.md
       - Episode: reference/episode.md
       - Turn: reference/turn.md
+      - DataFrames & schema: reference/frames.md
       - Phonetics: reference/phonetics.md
       - Exceptions & constants: reference/misc.md
   - Contributing: contributing.md

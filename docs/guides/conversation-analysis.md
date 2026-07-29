@@ -24,6 +24,10 @@ stretches of speech attributed to one or more speakers. From those you can study
       labelled `"host"` and ~1.9% `"guest"`. So `get_host_turns()`,
       `get_guest_turns()`, and any role distribution count only known hosts and
       guests. They undercount the real totals and never sum to all turns.
+    - That value is a sentinel, not a null, so `dropna()` will not remove it.
+      Test with `turn.has_inferred_role`, or against
+      `sporc.PLACEHOLDER_SPEAKERS` — never against a literal you typed from
+      memory. See [DataFrames](dataframes.md#two-columns-that-mislead).
 
 ## Getting turns
 

@@ -2,6 +2,7 @@
 Unit tests for the SPORC CLI module.
 """
 
+import argparse
 import pytest
 import sys
 from unittest.mock import patch, MagicMock
@@ -385,3 +386,70 @@ class TestCLI:
             handle_search_episodes(args)
 
         mock_print.assert_any_call("\nFound 0 episodes matching criteria: {'min_duration': 1800}")
+
+
+class TestColumnsCommand:
+    """
+    `sporc columns` answers from the static registry.
+
+    The point of the command is that it costs nothing: no dataset, no network,
+    no token. A test that mocked SPORCDataset would not notice if that stopped
+    being true, so these call the handler for real.
+    """
+
+    def test_describes_a_table(self, capsys):
+        from sporc.cli import handle_columns
+
+        handle_columns(argparse.Namespace(table="acoustics", grep=None))
+        out = capsys.readouterr().out
+        assert "f0_semitone_from_27_5hz_sma3nz_mean" in out
+        assert "semitones above 27.5 Hz" in out
+
+    def test_accepts_an_alias(self, capsys):
+        from sporc.cli import handle_columns
+
+        handle_columns(argparse.Namespace(table="turns_text", grep=None))
+        out = capsys.readouterr().out
+        assert out.startswith("turns")
+        assert "inferred_speaker_name" in out
+
+    def test_no_table_lists_the_tables(self, capsys):
+        from sporc.cli import handle_columns
+
+        handle_columns(argparse.Namespace(table=None, grep=None))
+        out = capsys.readouterr().out
+        assert "turns" in out and "acoustics" in out and "episode_metrics" in out
+
+    def test_grep_filters(self, capsys):
+        from sporc.cli import handle_columns
+
+        handle_columns(argparse.Namespace(table="turns", grep="sentinel"))
+        out = capsys.readouterr().out
+        assert "inferred_speaker_name" in out
+        assert "turn_text" not in out
+
+    def test_grep_with_no_matches_says_so(self, capsys):
+        from sporc.cli import handle_columns
+
+        handle_columns(argparse.Namespace(table="turns", grep="zzzznope"))
+        assert "match" in capsys.readouterr().out
+
+    def test_unknown_table_raises_with_a_suggestion(self):
+        from sporc.cli import handle_columns
+
+        with pytest.raises(ValueError, match="turns"):
+            handle_columns(argparse.Namespace(table="turnz", grep=None))
+
+    def test_does_not_touch_the_network_or_a_dataset(self):
+        """Guards the claim in the help text and the docs."""
+        import subprocess
+        import sys
+
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sporc.cli, sys;"
+             "sporc.cli.handle_columns(__import__('argparse')."
+             "Namespace(table='turns', grep=None));"
+             "print('hub' if 'huggingface_hub' in sys.modules else 'no-hub')"],
+            capture_output=True, text=True, check=True)
+        assert out.stdout.strip().endswith("no-hub")

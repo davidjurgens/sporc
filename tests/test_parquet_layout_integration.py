@@ -17,7 +17,7 @@ from sporc.dataset import SPORCDataset
 from sporc.parquet_backend import ParquetBackend
 from sporc.source import LocalDataSource
 
-from conftest import EID_WITH_TURNS, PID_NO_TURNS, PID_WITH_TURNS
+from conftest import EID_WITH_TURNS, PID_NO_TURNS, PID_TURNS_2, PID_WITH_TURNS
 
 pytestmark = pytest.mark.integration
 
@@ -43,16 +43,16 @@ class TestWarmCachePath:
     def test_get_all_podcasts_without_prior_call(self, warm):
         """Regression: crashed with TypeError when called first on a warm cache."""
         ds = SPORCDataset(parquet_dir=warm)
-        assert len(ds.get_all_podcasts()) == 2
+        assert len(ds.get_all_podcasts()) == 3
 
     def test_iterate_podcasts_without_prior_call(self, warm):
         """Regression: same NoneType crash via the iterator."""
         ds = SPORCDataset(parquet_dir=warm)
-        assert len(list(ds.iterate_podcasts())) == 2
+        assert len(list(ds.iterate_podcasts())) == 3
 
     def test_podcast_ids_need_no_dataframe(self, warm):
         b = ParquetBackend(warm)
-        assert b.get_all_podcast_ids() == [PID_WITH_TURNS, PID_NO_TURNS]
+        assert b.get_all_podcast_ids() == [PID_WITH_TURNS, PID_NO_TURNS, PID_TURNS_2]
         assert b._podcast_df is None
 
     def test_ids_match_dataframe_order(self, warm):
@@ -237,7 +237,7 @@ class TestEpisodeCatalogConversionIsBounded:
 
     def test_restriction_change_invalidates_the_cache(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
-        assert len(backend.search_episodes()) == 3
+        assert len(backend.search_episodes()) == 4
         assert backend._episode_records_cache is not None
 
         backend.restrict_to_podcasts([PID_WITH_TURNS])
@@ -247,7 +247,7 @@ class TestEpisodeCatalogConversionIsBounded:
             PID_WITH_TURNS}
 
         backend.restrict_to_podcasts(None)
-        assert len(backend.search_episodes()) == 3
+        assert len(backend.search_episodes()) == 4
 
     def test_iterate_episodes_bounded_does_not_materialize_all(
         self, tmp_parquet_layout
@@ -391,7 +391,7 @@ class TestPrefetchResolution:
         # constructor's subset= job.
         ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
         ds.prefetch([PID_WITH_TURNS])
-        assert ds._parquet_backend.num_podcasts == 2
+        assert ds._parquet_backend.num_podcasts == 3
 
 
 @pytest.mark.integration
@@ -411,7 +411,7 @@ class TestRestrictToPodcasts:
 
     def test_updates_counts(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
-        assert (backend.num_podcasts, backend.num_episodes) == (2, 3)
+        assert (backend.num_podcasts, backend.num_episodes) == (3, 4)
         backend.restrict_to_podcasts([PID_WITH_TURNS])
         # PID_WITH_TURNS owns two of the three fixture episodes.
         assert (backend.num_podcasts, backend.num_episodes) == (1, 2)
@@ -427,8 +427,8 @@ class TestRestrictToPodcasts:
         backend = ParquetBackend(tmp_parquet_layout)
         backend.restrict_to_podcasts([PID_WITH_TURNS])
         backend.restrict_to_podcasts(None)
-        assert len(backend.get_all_podcast_ids()) == 2
-        assert (backend.num_podcasts, backend.num_episodes) == (2, 3)
+        assert len(backend.get_all_podcast_ids()) == 3
+        assert (backend.num_podcasts, backend.num_episodes) == (3, 4)
 
     def test_unknown_ids_are_dropped(self, tmp_parquet_layout):
         backend = ParquetBackend(tmp_parquet_layout)
@@ -471,7 +471,7 @@ class TestSubsetPinsTheDataset:
 
     def test_no_subset_leaves_the_whole_corpus_visible(self, tmp_parquet_layout):
         ds = SPORCDataset(parquet_dir=tmp_parquet_layout)
-        assert ds._parquet_backend.num_podcasts == 2
+        assert ds._parquet_backend.num_podcasts == 3
 
 
 @pytest.mark.integration
@@ -646,7 +646,7 @@ class TestUnknownSearchCriteriaAreRefused:
         # rather than raising, and does so before the rows are materialized.
         backend = ParquetBackend(tmp_parquet_layout)
 
-        assert len(backend.search_episodes()) == 3
+        assert len(backend.search_episodes()) == 4
         assert len(backend.search_episodes(max_results=1)) == 1
         assert len(backend.search_episodes(max_results=1,
                                            category="comedy")) == 1

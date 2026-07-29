@@ -69,6 +69,46 @@ for episode in podcast.episodes:
             print(f"  [{turn.inferred_speaker_role}] {turn.text[:60]}...")
 ```
 
+## Working above one episode
+
+The object model above is the right shape for one episode. For anything larger,
+read the data as columns. Same files, but without a Parquet footer parse per
+podcast:
+
+```python
+sporc = SPORCDataset(subset="news")     # frames then cover exactly this slice
+
+# columns= is the argument that matters: the full turns table is ~710 bytes a
+# row, of which turn_text alone is 265.
+turns = sporc.turns_frame(columns=["episode_id", "turn_count", "start_time"])
+
+# Conversation windows, with overlap. This is where the familiar
+# `cumcount() // size` idiom silently stops being correct.
+windows = sporc.window_frame(size=12, overlap=6)
+
+# The corpus-wide catalogs, whatever slice is loaded.
+guests = sporc.catalog("guest_index")
+```
+
+Building 12-turn windows over 7,625 episodes takes ~1.4 min through
+`episode.sliding_window()` and about a second through `window_frame`, which
+produces the same windows.
+
+Two columns mislead, and the [DataFrames
+guide](https://sporc.readthedocs.io/en/latest/guides/dataframes/) covers both:
+`speaker` is a list, and ~45% of turns have more than one entry; and
+`inferred_speaker_name` / `inferred_speaker_role` hold sentinel strings rather
+than nulls for the ~90% of turns never attributed to a person, so `dropna()`
+removes nothing.
+
+```python
+from sporc import PLACEHOLDER_SPEAKERS
+named = turns[~turns.inferred_speaker_name.isin(PLACEHOLDER_SPEAKERS)]
+```
+
+`sporc columns <table>` prints what is in a table from the shell, with no data
+downloaded and no token needed.
+
 ## Data Access
 
 The corpus is ~57 GB and partitioned by podcast, so each podcast is fetched as a

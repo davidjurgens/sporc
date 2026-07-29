@@ -6,6 +6,8 @@ import math
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
+from .constants import PLACEHOLDER_SPEAKERS
+
 
 @dataclass
 class Turn:
@@ -14,6 +16,20 @@ class Turn:
 
     A turn is a segment of speech by one or more speakers, with associated
     metadata including timing, text, and audio features.
+
+    **Sentinels, not nulls.** :attr:`inferred_speaker_name` and
+    :attr:`inferred_speaker_role` never hold null for a turn that was diarized
+    but not attributed. They hold the strings ``NO_INFERRED_SPEAKER`` and
+    ``NO_INFERRED_ROLE``, which are 81-90% of turns depending on the slice. So
+    ``dropna()`` removes nothing, ``IS NOT NULL`` keeps every placeholder row,
+    and grouping by speaker pools hundreds of different people into one
+    "speaker" unless you filter them out. Use :attr:`has_inferred_speaker` and
+    :attr:`has_inferred_role`, or :data:`sporc.PLACEHOLDER_SPEAKERS`, rather
+    than writing the literal -- guessing it is how a filter comes to never fire.
+
+    **Speakers are a list.** :attr:`speaker` holds every diarization label
+    active in the turn, and about 45% of turns have more than one. It can also
+    be empty. See :attr:`is_overlapping` and :attr:`primary_speaker`.
     """
 
     # Core turn information
@@ -39,8 +55,10 @@ class Turn:
     f0_semitone_from_27_5hz_sma3nz_stdev: Optional[float] = None
     f1_frequency_sma3nz_stdev: Optional[float] = None
 
-    # Speaker inference. Empty for episodes diarized but never run through the
-    # name and role classifier, which is most of what 1.1 added.
+    # Speaker inference. These carry the sentinels NO_INFERRED_ROLE and
+    # NO_INFERRED_SPEAKER, not null, for the ~81-90% of turns that were diarized
+    # but never resolved to a person -- see the class docstring, and prefer
+    # has_inferred_role / has_inferred_speaker to testing them by hand.
     inferred_speaker_role: Optional[str] = None
     inferred_speaker_name: Optional[str] = None
 
@@ -76,13 +94,26 @@ class Turn:
 
     @property
     def is_overlapping(self) -> bool:
-        """Check if this turn involves multiple speakers (overlapping)."""
+        """
+        Whether more than one speaker is active in this turn.
+
+        True for about 45% of turns in the corpus, so this is the common case
+        rather than an edge case. Any within-speaker comparison needs the turns
+        where it is False; averaging across the others mixes two people.
+        """
         return len(self.speaker) > 1
 
     @property
-    def primary_speaker(self) -> str:
-        """Get the primary speaker (first in the list)."""
-        return self.speaker[0]
+    def primary_speaker(self) -> Optional[str]:
+        """
+        The first speaker in the list, or None if the turn has none.
+
+        None rather than an error: an empty speaker list is a legal state (see
+        ``__post_init__``), so raising here would make a documented condition
+        unreadable. It also matches what the vectorised equivalent produces --
+        ``df.speaker.str[0]`` yields NaN for an empty list.
+        """
+        return self.speaker[0] if self.speaker else None
 
     @property
     def is_host(self) -> bool:
@@ -93,6 +124,30 @@ class Turn:
     def is_guest(self) -> bool:
         """Check if the primary speaker is inferred to be a guest."""
         return self.inferred_speaker_role == "guest"
+
+    @property
+    def has_inferred_speaker(self) -> bool:
+        """
+        Whether :attr:`inferred_speaker_name` names an actual person.
+
+        False for null and for the ``NO_INFERRED_SPEAKER`` sentinel, which is
+        the value for most turns. Testing the field for null instead keeps every
+        unattributed turn, which is the mistake this property exists to prevent.
+        """
+        name = self.inferred_speaker_name
+        return bool(name) and name not in PLACEHOLDER_SPEAKERS
+
+    @property
+    def has_inferred_role(self) -> bool:
+        """
+        Whether :attr:`inferred_speaker_role` holds a resolved role.
+
+        False for null and for the ``NO_INFERRED_ROLE`` sentinel. Note that
+        :attr:`is_host` and :attr:`is_guest` are both False for such a turn, so
+        ``not is_host`` does not mean "guest".
+        """
+        role = self.inferred_speaker_role
+        return bool(role) and role not in PLACEHOLDER_SPEAKERS
 
     @property
     def word_count(self) -> int:
@@ -197,6 +252,8 @@ class Turn:
             'primary_speaker': self.primary_speaker,
             'inferred_speaker_role': self.inferred_speaker_role,
             'inferred_speaker_name': self.inferred_speaker_name,
+            'has_inferred_role': self.has_inferred_role,
+            'has_inferred_speaker': self.has_inferred_speaker,
             'word_count': self.word_count,
             'token_count': self.token_count,
             'words_per_second': self.words_per_second,
@@ -206,7 +263,8 @@ class Turn:
 
     def __str__(self) -> str:
         """String representation of the turn."""
-        return f"Turn({self.primary_speaker}, {self.start_time:.1f}s-{self.end_time:.1f}s, {self.word_count} words)"
+        who = self.primary_speaker or "no speaker"
+        return f"Turn({who}, {self.start_time:.1f}s-{self.end_time:.1f}s, {self.word_count} words)"
 
     def __repr__(self) -> str:
         """Detailed string representation of the turn."""

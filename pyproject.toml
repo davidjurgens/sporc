@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sporc"
-version = "1.1.4"
+version = "1.2.0"
 description = "A Python package for working with the SPORC (Structured Podcast Open Research Corpus) dataset"
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,11 +33,22 @@ dependencies = [
     # a large prefetch used to die partway through.
     "huggingface_hub>=1.2.0",
     "pyarrow>=12.0.0",
+    # The Parquet backend materializes the catalogs as DataFrames: building the
+    # indexes calls to_pandas() unconditionally, and the warm-cache path reads
+    # them back through feather. A ParquetBackend cannot be constructed without
+    # pandas, so listing it as optional (as releases through 1.1.4 did) only
+    # meant a bare install failed at first use rather than at install time. The
+    # frame API in 1.2 makes the requirement explicit rather than accidental.
+    "pandas>=1.3.0",
+    # window_frame() builds its windows with np.repeat/np.cumsum rather than a
+    # per-episode loop. pandas already guarantees numpy is present, so this
+    # line adds nothing to an install; it is here because sporc/frames.py
+    # imports numpy itself and should say so.
+    "numpy>=1.21.0",
 ]
-# The base install only needs the Hub client and pyarrow. pandas/numpy/requests
-# are used exclusively by the optional phonetics module (imported lazily inside
-# sporc/phonetics.py), and tqdm only by the build scripts in scripts/ — so those
-# live under the extras below rather than being pulled into every install.
+# Beyond the above, requests is used by the optional phonetics module (imported
+# lazily inside sporc/phonetics.py) and tqdm only by the build scripts in
+# scripts/, so those live under the extras below.
 
 [project.optional-dependencies]
 dev = [
@@ -47,10 +58,8 @@ dev = [
     "isort>=5.0",
     "flake8>=3.8",
     "mypy>=0.910",
-    # Needed by the test suite (conftest builds fixtures with pandas) and by
-    # the parquet/index build scripts in scripts/ (tqdm progress bars).
-    "pandas>=1.3.0",
-    "numpy>=1.21.0",
+    # tqdm for the parquet/index build scripts in scripts/. pandas and numpy
+    # are core dependencies.
     "tqdm>=4.62.0",
 ]
 docs = [

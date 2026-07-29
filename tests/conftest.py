@@ -22,6 +22,15 @@ PID_NO_TURNS = "b9c1d2e3f4a5"
 EID_WITH_TURNS = "a1b2c3d4e5f60718"
 EID_NO_TURNS = "1122334455667788"
 
+# A second podcast with turns, in the same part file as the first. Without it,
+# every turns part contains exactly one podcast, so "narrow this part down to
+# the podcasts asked for" is a no-op and a broken filter passes every test.
+PID_TURNS_2 = "5c7e19aa30b4"
+# Its episode is long enough to window: 30 turns, against the 2 that the
+# original fixture episode carries.
+EID_LONG = "99aa88bb77cc66dd"
+LONG_TURN_COUNT = 30
+
 
 def _episode_columns(episode_id, podcast_id, title):
     cols = {
@@ -59,21 +68,22 @@ def tmp_parquet_layout(tmp_path):
     meta.mkdir(parents=True)
 
     pq.write_table(pa.table({
-        "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS],
-        "rss_url": ["https://a.example.com/f.xml", "https://b.example.com/f.xml"],
-        "pod_title": ["Turns Podcast", "No Turns Podcast"],
-        "pod_description": ["d1", "d2"],
-        "language": ["en", "en"],
-        "explicit": [0, 0],
-        "image_url": ["http://img/1", "http://img/2"],
-        "itunes_author": ["A", "B"],
-        "episode_count": [2, 1],
-        "total_duration_seconds": [200.0, 100.0],
-        "primary_category": ["comedy", "news"],
-        "all_categories": [["comedy"], ["news"]],
-        "host_names": [["Ira Glass"], ["Someone"]],
-        "earliest_date": ["2020-01-01", "2020-01-01"],
-        "latest_date": ["2020-01-02", "2020-01-02"],
+        "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS, PID_TURNS_2],
+        "rss_url": ["https://a.example.com/f.xml", "https://b.example.com/f.xml",
+                    "https://c.example.com/f.xml"],
+        "pod_title": ["Turns Podcast", "No Turns Podcast", "Long Turns Podcast"],
+        "pod_description": ["d1", "d2", "d3"],
+        "language": ["en", "en", "en"],
+        "explicit": [0, 0, 0],
+        "image_url": ["http://img/1", "http://img/2", "http://img/3"],
+        "itunes_author": ["A", "B", "C"],
+        "episode_count": [2, 1, 1],
+        "total_duration_seconds": [200.0, 100.0, 100.0],
+        "primary_category": ["comedy", "news", "comedy"],
+        "all_categories": [["comedy"], ["news"], ["comedy"]],
+        "host_names": [["Ira Glass"], ["Someone"], ["Third Host"]],
+        "earliest_date": ["2020-01-01", "2020-01-01", "2020-01-01"],
+        "latest_date": ["2020-01-02", "2020-01-02", "2020-01-02"],
     }), meta / "podcast_catalog.parquet")
 
     ep_rows = {}
@@ -81,6 +91,7 @@ def tmp_parquet_layout(tmp_path):
         _episode_columns(EID_WITH_TURNS, PID_WITH_TURNS, "Has Turns"),
         _episode_columns("cc00dd11ee22ff33", PID_WITH_TURNS, "Partition But No Turns"),
         _episode_columns(EID_NO_TURNS, PID_NO_TURNS, "No Partition"),
+        _episode_columns(EID_LONG, PID_TURNS_2, "Long Enough To Window"),
     ):
         for k, v in cols.items():
             ep_rows.setdefault(k, []).extend(v)
@@ -99,12 +110,13 @@ def tmp_parquet_layout(tmp_path):
     # episode-grained index has a row per episode -- the search_episodes()
     # host_name/guest_name filters route through these, and an index that
     # disagreed with the catalog would let a routing bug pass unnoticed.
-    ep_ids = [EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS]
-    ep_pids = [PID_WITH_TURNS, PID_WITH_TURNS, PID_NO_TURNS]
+    ep_ids = [EID_WITH_TURNS, "cc00dd11ee22ff33", EID_NO_TURNS, EID_LONG]
+    ep_pids = [PID_WITH_TURNS, PID_WITH_TURNS, PID_NO_TURNS, PID_TURNS_2]
+    n_eps = len(ep_ids)
     pq.write_table(pa.table({
-        "name_normalized": ["ira glass"] * 3 + ["a guest"] * 3,
-        "name_original": ["Ira Glass"] * 3 + ["A Guest"] * 3,
-        "role": ["host"] * 3 + ["guest"] * 3,
+        "name_normalized": ["ira glass"] * n_eps + ["a guest"] * n_eps,
+        "name_original": ["Ira Glass"] * n_eps + ["A Guest"] * n_eps,
+        "role": ["host"] * n_eps + ["guest"] * n_eps,
         "episode_id": ep_ids * 2,
         "podcast_id": ep_pids * 2,
     }), meta / "speaker_name_index.parquet")
@@ -112,13 +124,13 @@ def tmp_parquet_layout(tmp_path):
     # different source: PID_NO_TURNS is hosted by "Someone" there even though
     # its episode predicts "Ira Glass".
     pq.write_table(pa.table({
-        "name_normalized": ["ira glass", "someone"],
-        "name_original": ["Ira Glass", "Someone"],
-        "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS],
+        "name_normalized": ["ira glass", "someone", "third host"],
+        "name_original": ["Ira Glass", "Someone", "Third Host"],
+        "podcast_id": [PID_WITH_TURNS, PID_NO_TURNS, PID_TURNS_2],
     }), meta / "host_index.parquet")
     pq.write_table(pa.table({
-        "name_normalized": ["ira glass"] * 3,
-        "name_original": ["Ira Glass"] * 3,
+        "name_normalized": ["ira glass"] * n_eps,
+        "name_original": ["Ira Glass"] * n_eps,
         "podcast_id": ep_pids,
         "episode_id": ep_ids,
     }), meta / "host_episode_index.parquet")
@@ -137,6 +149,30 @@ def tmp_parquet_layout(tmp_path):
         "podcast_id": [PID_WITH_TURNS],
         "episode_id": [EID_WITH_TURNS],
     }), meta / "guest_episode_index.parquet")
+
+    # Per-episode metrics. Only the two episodes that have turns get a row:
+    # metrics coverage is partial in the real corpus too, which is what makes
+    # the difference between a left and an inner join observable.
+    pq.write_table(pa.table({
+        "episode_id": [EID_WITH_TURNS, EID_LONG],
+        "podcast_id": [PID_WITH_TURNS, PID_TURNS_2],
+        "total_word_count": pa.array([4, 90], pa.int32()),
+        "total_turn_count": pa.array([2, LONG_TURN_COUNT], pa.int32()),
+        "unique_speaker_count": pa.array([2, 2], pa.int32()),
+        "avg_turn_duration": [1.75, 5.0],
+        "median_turn_duration": [1.75, 5.0],
+        "avg_words_per_second": [1.14, 0.6],
+        "host_word_count": pa.array([2, 18], pa.int32()),
+        "guest_word_count": pa.array([2, 18], pa.int32()),
+        "host_turn_proportion": [0.5, 0.2],
+        "host_word_proportion": [0.5, 0.2],
+        "avg_gap_duration": [0.5, 5.0],
+        "total_overlap_duration": [0.0, 0.0],
+        "discourse_marker_count": pa.array([0, 0], pa.int32()),
+        "discourse_marker_rate": [0.0, 0.0],
+        "speaking_rate_host": [1.0, 0.6],
+        "speaking_rate_guest": [1.33, 0.6],
+    }), meta / "episode_metrics.parquet")
 
     # From dataset 1.1 the trees are packed: many podcasts per part file, one
     # row group each, located through metadata/shard_map.parquet. The fixture
@@ -164,10 +200,16 @@ def tmp_parquet_layout(tmp_path):
 
     episode_tables = []
     for pid, eids in ((PID_WITH_TURNS, [EID_WITH_TURNS, "cc00dd11ee22ff33"]),
-                      (PID_NO_TURNS, [EID_NO_TURNS])):
+                      (PID_NO_TURNS, [EID_NO_TURNS]),
+                      (PID_TURNS_2, [EID_LONG])):
         rows = {}
         for eid in eids:
             cols = _episode_columns(eid, pid, f"Episode {eid[:4]}")
+            # The published episodes tree carries episode_date_localized and no
+            # episode_date; only the catalog has the latter. They hold the same
+            # millisecond epoch as a string, which is the trap worth reproducing
+            # -- pd.to_datetime on the raw value silently yields 1970.
+            cols["episode_date_localized"] = cols.pop("episode_date")
             cols.update({
                 "ep_description": ["desc"],
                 "transcript": ["hello world"],
@@ -180,7 +222,6 @@ def tmp_parquet_layout(tmp_path):
                 "guest_speaker_labels": ["{}"],
                 "overlap_prop_turn_count": [0.1],
                 "image_url": ["http://img/1"],
-                "episode_date_localized": ["2020-01-01"],
                 "oldest_episode_date": ["2020-01-01"],
                 "last_update": ["2020-01-01"],
                 "created_on": ["2020-01-01"],
@@ -194,9 +235,9 @@ def tmp_parquet_layout(tmp_path):
 
     _write_part("episodes", "episodes", "part-000-000.parquet", episode_tables)
 
-    # Only PID_WITH_TURNS has turns, and only for one of its two episodes --
-    # exactly the shape of the real corpus, where a podcast present in the
-    # catalog may be absent from the turns tree entirely.
+    # PID_NO_TURNS has no turns at all -- exactly the shape of the real corpus,
+    # where a podcast present in the catalog may be absent from the turns tree.
+    # PID_WITH_TURNS has turns for only one of its two episodes.
     turns = pa.table({
         "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS],
         "podcast_id": [PID_WITH_TURNS, PID_WITH_TURNS],
@@ -214,18 +255,80 @@ def tmp_parquet_layout(tmp_path):
         "inferred_speaker_role": ["host", "guest"],
         "speakers_recomputed": [True, True],
     })
+
+    # The second podcast's episode carries the states the frame API has to get
+    # right and the object model rarely meets:
+    #   - the placeholder sentinels, on most turns, as in the real corpus
+    #   - an overlapping turn (two speakers) and one attributed to nobody
+    #   - a start_time/turn_count inversion, so any code that assumes the two
+    #     orders agree is caught -- they disagree on ~3.7% of real episodes
+    n = LONG_TURN_COUNT
+    speakers, names, roles = [], [], []
+    for i in range(n):
+        if i == 3:
+            speakers.append(["SPEAKER_00", "SPEAKER_01"])   # overlapping
+        elif i == 4:
+            speakers.append([])                             # attributed to nobody
+        else:
+            speakers.append([f"SPEAKER_0{i % 2}"])
+        if i % 5 == 0:
+            names.append("Third Host")
+            roles.append("host")
+        elif i % 5 == 1:
+            names.append("Long Guest")
+            roles.append("guest")
+        else:
+            names.append("NO_INFERRED_SPEAKER")
+            roles.append("NO_INFERRED_ROLE")
+
+    starts = [float(i * 10) for i in range(n)]
+    # Turns 7 and 8 are out of temporal order relative to their turn_count.
+    starts[7], starts[8] = starts[8], starts[7]
+
+    # Turn 20 has zero duration, as 0.22% of real turns do. Like the empty-text
+    # turn, the object model skips it (end_time <= start_time) while the frame
+    # keeps it -- the second half of the documented divergence.
+    ends = [s + 5.0 for s in starts]
+    ends[20] = starts[20]
+
+    long_turns = pa.table({
+        "episode_id": [EID_LONG] * n,
+        "podcast_id": [PID_TURNS_2] * n,
+        "speaker": speakers,
+        # Turn 12 has empty text, as 0.16% of real turns do. The object model
+        # cannot represent it -- Turn.__post_init__ rejects empty text and the
+        # builder swallows the error -- so this is the one place the two routes
+        # legitimately disagree, and it should be visible rather than absent.
+        "turn_text": ["" if i == 12 else f"turn {i} text" for i in range(n)],
+        "start_time": starts,
+        "end_time": ends,
+        "duration": [e - s for s, e in zip(starts, ends)],
+        "turn_count": list(range(n)),
+        "token_count": [3] * n,
+        "inferred_speaker_name": names,
+        "inferred_speaker_role": roles,
+        "speakers_recomputed": [True] * n,
+    })
+
+    # Both podcasts in ONE part file, so a bulk read has to narrow a part down
+    # to the podcasts asked for rather than getting it for free.
     _write_part("turns_text", "turns/text", "part-000-000.parquet",
-                [(PID_WITH_TURNS, turns)])
+                [(PID_WITH_TURNS, turns), (PID_TURNS_2, long_turns)])
 
     acoustics = pa.table({
-        "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS],
-        "podcast_id": [PID_WITH_TURNS, PID_WITH_TURNS],
-        "turn_count": [0, 1],
-        "mfcc1_sma3_mean": [1.0, 2.0],
-        "mfcc1_sma3_stdev": [0.1, 0.2],
-        "f0_semitone_from_27_5hz_sma3nz_mean": [30.0, 31.0],
-        "f0_semitone_from_27_5hz_sma3nz_stdev": [1.0, 1.1],
+        "episode_id": [EID_WITH_TURNS, EID_WITH_TURNS, EID_WITH_TURNS],
+        "podcast_id": [PID_WITH_TURNS, PID_WITH_TURNS, PID_WITH_TURNS],
+        # Turn 0 appears twice, duplicated verbatim. 81,807 turns in the real
+        # corpus are stored this way, carried forward from version 1.0, and a
+        # merge that does not de-dup multiplies rows on both sides.
+        "turn_count": [0, 0, 1],
+        "mfcc1_sma3_mean": [1.0, 1.0, 2.0],
+        "mfcc1_sma3_stdev": [0.1, 0.1, 0.2],
+        "f0_semitone_from_27_5hz_sma3nz_mean": [30.0, 30.0, 31.0],
+        "f0_semitone_from_27_5hz_sma3nz_stdev": [1.0, 1.0, 1.1],
     })
+    # PID_TURNS_2 has turns but NO acoustics and NO metrics, so an inner join
+    # would silently delete all 30 of its turns where a left join keeps them.
     _write_part("acoustics", "acoustics", "part-000-000.parquet",
                 [(PID_WITH_TURNS, acoustics)])
 
@@ -261,7 +364,7 @@ def tmp_parquet_layout(tmp_path):
 
     (root / "manifest.json").write_text(json.dumps({
         "version": "1.1",
-        "record_counts": {"podcasts": 2, "episodes": 3},
+        "record_counts": {"podcasts": 3, "episodes": 4},
     }))
     return str(root)
 

@@ -1,5 +1,105 @@
 # Changelog
 
+## 1.2.0
+
+There is now a way to get a table out of the library. `turns_frame()`,
+`episodes_frame()`, `podcasts_frame()` and `episode_metrics_frame()` return
+pandas DataFrames; `window_frame()` returns conversation windows; `catalog()`
+reads the corpus-wide metadata indexes. Before this, any question above the
+level of one episode had to leave the library and read the Parquet directly,
+because walking the object model parses a file footer per podcast -- building
+12-turn windows across 7,625 episodes took about 1.4 minutes that way, against
+roughly a second as a frame. Both produce the same windows.
+
+`columns=` is the argument that matters and the documentation leads with it: the
+full turns table is about 710 bytes a row, of which `turn_text` alone is 265,
+while the three columns most analyses start from come to 85. Column names are
+checked against the schema before any file is opened, so a typo fails at the
+call rather than after a download. A request estimated over 8 GB raises
+`FrameTooLargeError` instead of running -- the row count is exact and free
+(the shard map records it), and the alternative is the operating system killing
+a notebook kernel. `iter_turns_frames()` yields one frame per part file for work
+that genuinely spans the corpus, and `parquet_paths()` hands over the file paths
+for DuckDB or `pd.read_parquet`.
+
+Frames are never cached. Notebooks add columns to what they get back, so
+handing two cells the same object would make the second cell's result depend on
+whether the first had run; the catalog accessors copy for the same reason.
+
+**`PLACEHOLDER_SPEAKERS` is now exported from the package root.**
+`inferred_speaker_name` and `inferred_speaker_role` contain sentinel strings
+rather than nulls -- `NO_INFERRED_SPEAKER` and `NO_INFERRED_ROLE`, on 81-90% of
+turns depending on the slice -- so `dropna()` removes nothing and `IS NOT NULL`
+keeps every placeholder row. The constant existed but lived in `sporc.phonetics`,
+which pulls in torch, so nobody could reach it; the value is also guessable and
+the guess is wrong, and a filter on the plausible-looking `NO_INFERRED_NAME`
+never fires. That happened in teaching material built on this package and
+overstated a figure sixfold. The sentinels now live in `sporc.constants` with
+`NO_INFERRED_SPEAKER`, `NO_INFERRED_ROLE`, `SPEAKER_UNKNOWN`, `ANON_SPEAKER_RE`
+and `is_placeholder_speaker`; `sporc.phonetics.PLACEHOLDER_SPEAKERS` still
+resolves to the same object. `Turn` gains `has_inferred_speaker` and
+`has_inferred_role`, and `sporc.add_speaker_columns()` is the vectorised
+equivalent.
+
+`Episode.episode_datetime` is a new UTC-aware publication time.
+`Episode.episode_date` is unchanged but was always local-naive: it renders the
+same instant in whatever timezone the machine is set to, and about 13.6% of
+episodes fall on a different calendar day between `Asia/Tokyo` and
+`America/Detroit`. The underlying field is a millisecond epoch stored as a
+string, and casting it to an integer and parsing -- the obvious move -- reads it
+as nanoseconds and yields 1970 without raising, so `episodes_frame()` parses it
+by default. Despite the names, `episode_catalog.episode_date` and the episodes
+tree's `episode_date_localized` are the same value, byte for byte.
+
+`Turn.primary_speaker` returns `None` for a turn with no speakers instead of
+raising `IndexError`. An empty speaker list is a documented legal state -- where
+diarization produced no segments, the transcript arrives as one unattributed
+turn -- so raising on it was a bug, and `None` also matches what the vectorised
+equivalent produces.
+
+New `sporc/schema.py` describes every table and column: dtype, approximate bytes
+per row, and a sentence on what it means, including the twelve eGeMAPSv2
+acoustic names spelled out. It is static data with no I/O and no pandas, so
+`sporc.describe_columns("acoustics")`, `ds.columns(...)` and the new
+`sporc columns <table>` command all answer offline with no dataset and no token.
+It is also the single home for those acoustic names, which were previously
+written out in three places with nothing keeping them in step.
+
+Catalog access no longer requires knowing the HuggingFace cache layout.
+`sporc.load_catalog("guest_index")` fetches that one file (about a megabyte)
+without constructing a dataset. Internally the ten catalog loaders that each did
+their own path join and existence probe now share one helper routed through the
+data source, which also fixes a latent bug: an optional catalog present in the
+dataset but not downloaded at construction raised `IndexNotBuiltError` instead
+of being fetched. Under `allow_downloads=False` a missing catalog now raises
+`DataNotLocalError` rather than `IndexNotBuiltError`; both derive from
+`SPORCError`.
+
+`catalog()` deliberately ignores `subset=` pinning while the `*_frame()`
+accessors honour it. Reaching past the loaded slice is the reason the catalogs
+are worth having: a cross-genre guest network needs the whole index while the
+dataset in hand is one genre.
+
+**pandas is a core dependency again.** The 1.1.4 notes below say it moved to the
+`phonetics` extra because only that module used it. That was wrong: building the
+indexes calls `to_pandas()` unconditionally and the warm-cache path reads the
+catalogs back through feather, so a `ParquetBackend` could never be constructed
+without pandas. Listing it as optional only meant a bare install failed at first
+use rather than at install time.
+
+Two things worth recording about how the two routes differ. `turns_frame` sorts
+by `(episode_id, start_time, turn_count)`, matching `Episode.turns`; sorting by
+`turn_count` -- tempting, since it is the join key -- gives a different answer on
+about 3.7% of episodes, because `start_time` is not monotone in it. And building
+`Episode.turns` silently skips rows with empty text (0.16%) and rows with
+`end_time <= start_time` (0.22%), which together touch 23% of episodes. The
+frames keep those rows, because they are in the data; the DataFrames guide gives
+the one-line filter that reproduces the object model's answer.
+
+`Episode.sliding_window` is unchanged, including its habit of dropping a
+trailing partial window. `window_frame` reproduces that by default so the two
+agree, and takes `partial=True` to keep the remainder.
+
 ## 1.1.4
 
 `SPORCDataset(subset=...)` now pins the dataset to the fetched slice. Before, it

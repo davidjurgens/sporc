@@ -5,7 +5,68 @@ This module contains constants used throughout the SPORC package,
 including Apple Podcasts categories and other configuration values.
 """
 
-from typing import Dict, List, Set, Any
+import re
+from typing import Any, Dict, List, Optional, Set
+
+# ---------------------------------------------------------------------------
+# Speaker sentinels
+# ---------------------------------------------------------------------------
+# These live here rather than in sporc/phonetics.py, where they started, because
+# phonetics pulls in torch and Praat and is deliberately imported on demand.
+# A constant nobody can import without paying for the alignment stack is a
+# constant nobody imports.
+
+#: Written into ``inferred_speaker_name`` when name attribution found nobody.
+NO_INFERRED_SPEAKER = "NO_INFERRED_SPEAKER"
+
+#: Written into ``inferred_speaker_role`` when role attribution found nothing.
+NO_INFERRED_ROLE = "NO_INFERRED_ROLE"
+
+#: Written where a speaker is known to exist but could not be identified.
+SPEAKER_UNKNOWN = "SPEAKER_UNKNOWN"
+
+#: Speaker values that name no one.
+#:
+#: The two ``inferred_speaker_*`` columns never contain nulls. They contain
+#: these sentinels, and the sentinel is the overwhelming majority: 81% of turns
+#: in the tutorial subset, 89.6% in the news genre slice. Two things follow, and
+#: both are easy to hit:
+#:
+#: - ``dropna()`` removes nothing and ``WHERE x IS NOT NULL`` keeps every
+#:   placeholder row, so any per-speaker grouping silently pools hundreds of
+#:   different people into one "speaker".
+#: - The name is guessable and the guess is wrong. Filtering on
+#:   ``NO_INFERRED_NAME`` -- a value that does not occur -- is a filter that
+#:   never fires, and the output looks entirely reasonable.
+#:
+#: Use this set, or :func:`is_placeholder_speaker`, rather than a literal.
+PLACEHOLDER_SPEAKERS = frozenset({
+    NO_INFERRED_SPEAKER,
+    NO_INFERRED_ROLE,
+    SPEAKER_UNKNOWN,
+})
+
+#: Raw diarization labels (``SPEAKER_00``, ...). These are per-episode:
+#: ``SPEAKER_00`` in one episode is not ``SPEAKER_00`` in the next, so they
+#: cannot identify a person across a podcast the way an inferred name can.
+#: Counting episodes per label without accounting for this is how a speaker
+#: appears to span the whole corpus.
+ANON_SPEAKER_RE = re.compile(r"^SPEAKER_\d+$", re.I)
+
+
+def is_placeholder_speaker(value: Optional[str]) -> bool:
+    """
+    Whether *value* names no one.
+
+    True for null, for the empty string, for every member of
+    :data:`PLACEHOLDER_SPEAKERS`, and for a raw per-episode diarization label
+    such as ``SPEAKER_00`` -- which names a voice within one episode but not a
+    person, and so cannot be grouped on across episodes.
+    """
+    if not value:
+        return True
+    return value in PLACEHOLDER_SPEAKERS or bool(ANON_SPEAKER_RE.match(value))
+
 
 # Apple Podcasts Categories
 # Source: https://podcasters.apple.com/support/1691-apple-podcasts-categories

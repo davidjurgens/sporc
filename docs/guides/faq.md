@@ -294,6 +294,12 @@ else:
     90% of turns carry `NO_INFERRED_ROLE`. Don't assume every turn has a resolved
     role; see [Conversation analysis](conversation-analysis.md).
 
+    That is a sentinel string, not a null. `dropna()` removes nothing and
+    `WHERE role IS NOT NULL` keeps every placeholder row. Use
+    `turn.has_inferred_role`, or `sporc.PLACEHOLDER_SPEAKERS` for the frame
+    equivalent — writing the literal from memory is how a filter comes to never
+    fire.
+
 ### What do the overlap metrics mean?
 
 They describe diarization quality:

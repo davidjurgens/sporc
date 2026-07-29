@@ -402,3 +402,58 @@ class TestIntegration:
         for main_cat, count in stats['subcategories_by_main_category'].items():
             subcats = get_subcategories(main_cat)
             assert count == len(subcats)
+
+# ---------------------------------------------------------------------------
+# Speaker sentinels
+# ---------------------------------------------------------------------------
+
+class TestSpeakerSentinels:
+    """
+    The sentinels moved out of sporc.phonetics in 1.2 so they could be imported
+    without the alignment stack. Both halves of that are load-bearing: they must
+    be reachable from the package root, and reaching them must not drag torch in.
+    """
+
+    def test_importable_from_package_root(self):
+        import sporc
+
+        assert sporc.NO_INFERRED_SPEAKER == "NO_INFERRED_SPEAKER"
+        assert sporc.NO_INFERRED_ROLE == "NO_INFERRED_ROLE"
+        assert sporc.PLACEHOLDER_SPEAKERS == frozenset({
+            "NO_INFERRED_SPEAKER", "NO_INFERRED_ROLE", "SPEAKER_UNKNOWN"})
+
+    def test_importing_sporc_does_not_import_phonetics(self):
+        """
+        phonetics pulls torch, torchaudio and Praat. If a re-export ever makes
+        `import sporc` reach it, every install silently needs the phonetics
+        extra -- and the failure appears as a missing torch, far from the cause.
+        """
+        import subprocess
+        import sys
+
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import sporc, sys; print('sporc.phonetics' in sys.modules)"],
+            capture_output=True, text=True, check=True)
+        assert out.stdout.strip() == "False"
+
+    def test_phonetics_re_export_is_the_same_object(self):
+        """lobanov_normalize still reads these; it must see the same set."""
+        import sporc
+        import sporc.phonetics
+
+        assert sporc.phonetics.PLACEHOLDER_SPEAKERS is sporc.PLACEHOLDER_SPEAKERS
+
+    @pytest.mark.parametrize("value,expected", [
+        ("Ira Glass", False),
+        ("NO_INFERRED_SPEAKER", True),
+        ("SPEAKER_00", True),      # per-episode diarization label, names no one
+        ("speaker_07", True),      # the pattern is case-insensitive
+        ("Speaker Jones", False),  # a real name that merely starts with it
+        (None, True),
+        ("", True),
+    ])
+    def test_is_placeholder_speaker(self, value, expected):
+        from sporc import is_placeholder_speaker
+
+        assert is_placeholder_speaker(value) is expected

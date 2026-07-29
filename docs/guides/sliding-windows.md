@@ -69,7 +69,17 @@ Helper methods on a window:
     About 90% of turns carry `inferred_speaker_role == "NO_INFERRED_ROLE"`; only
     ~7.4% are labelled `"host"` and ~1.9% `"guest"`. A window's role
     distribution therefore counts only known hosts and guests and undercounts
-    the rest. Treat `"host"`/`"guest"` totals as floors, not a partition.
+    the rest. Treat `"host"`/`"guest"` totals as floors, not a partition. The
+    value is a sentinel rather than a null; test it with
+    `sporc.PLACEHOLDER_SPEAKERS`.
+
+!!! tip "Above one episode, use `window_frame`"
+    `sliding_window` reads one episode's partition at a time. Across a corpus
+    slice that costs a Parquet footer parse per podcast — about 1.4 minutes for
+    7,625 episodes, against a second for
+    [`ds.window_frame(size=12)`](dataframes.md#conversation-windows), which
+    produces the same windows. Use this method for one episode and that one for
+    many.
 
 ## Turn-based windows
 
